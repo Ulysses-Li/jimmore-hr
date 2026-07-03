@@ -28,6 +28,8 @@ document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("出勤打
 const profile = await requireAuth();
 bindLogout();
 const settings = await getWorkSettings();
+const workShifts = normalizeWorkShifts(settings);
+const assignedShift = findShift(profile.defaultShiftId);
 
 qs("#pageContent").innerHTML = `
   <div class="row g-3">
@@ -35,6 +37,13 @@ qs("#pageContent").innerHTML = `
       <div class="panel p-3">
         <h2 class="h5 mb-3">今日操作</h2>
         <div class="alert alert-info py-2 mb-3" id="attendanceHint">正在讀取今日狀態...</div>
+        <div class="mb-3">
+          <label class="form-label">今日班別</label>
+          <div class="form-control bg-light" id="assignedShiftDisplay">
+            ${assignedShift ? shiftText(assignedShift) : "尚未設定班別"}
+          </div>
+          ${assignedShift ? "" : `<div class="form-text text-danger">請管理員先到員工管理分配預設班別。</div>`}
+        </div>
         <div class="small muted mb-3">
           打卡需要瀏覽器定位權限。若看到定位被拒絕，請點網址列左側圖示，將位置權限改為允許後重新整理。
         </div>
@@ -44,8 +53,7 @@ qs("#pageContent").innerHTML = `
         </div>
         <hr>
         <dl class="row mb-0">
-          <dt class="col-5">上班時間</dt><dd class="col-7">${settings.workStart}</dd>
-          <dt class="col-5">下班時間</dt><dd class="col-7">${settings.workEnd}</dd>
+          <dt class="col-5">班別</dt><dd class="col-7" id="shiftSummary">-</dd>
           <dt class="col-5">午休扣除</dt><dd class="col-7">${settings.lunchStart} - ${settings.lunchEnd}</dd>
           <dt class="col-5">標準工時</dt><dd class="col-7">${settings.standardHours} 小時</dd>
         </dl>
@@ -78,12 +86,13 @@ async function getPosition() {
 
 function resolveStatus(type, at) {
   const dateKey = todayKey(at);
+  const shift = getAssignedShift();
   if (type === "checkIn") {
-    const start = timeToDate(dateKey, settings.workStart);
+    const start = timeToDate(dateKey, shift.workStart);
     start.setMinutes(start.getMinutes() + Number(settings.lateGraceMinutes || 0));
     return at > start ? "late" : "normal";
   }
-  const end = timeToDate(dateKey, settings.workEnd);
+  const end = timeToDate(dateKey, shift.workEnd);
   return at < end ? "earlyLeave" : "normal";
 }
 
@@ -92,12 +101,17 @@ async function punch(type) {
   try {
     const at = new Date();
     const pos = await getPosition();
+    const shift = getAssignedShift();
     const status = resolveStatus(type, at);
     const record = {
       userId: profile.id,
       userName: profile.name,
       department: profile.department || "",
       type,
+      shiftId: shift.id,
+      shiftName: shift.name,
+      workStart: shift.workStart,
+      workEnd: shift.workEnd,
       timestamp: at,
       date: todayKey(at),
       latitude: pos.coords.latitude,
@@ -128,6 +142,12 @@ async function updateDaily(now) {
   const firstIn = records.find((item) => item.type === "checkIn");
   const lastOut = records.filter((item) => item.type === "checkOut").at(-1);
   if (!firstIn || !lastOut) return;
+  const shift = findShift(firstIn.shiftId) || {
+    id: firstIn.shiftId || "default",
+    name: firstIn.shiftName || "預設班別",
+    workStart: firstIn.workStart || settings.workStart,
+    workEnd: firstIn.workEnd || settings.workEnd
+  };
 
   const lunchHours = hoursBetween(timeToDate(date, settings.lunchStart), timeToDate(date, settings.lunchEnd));
   const total = Math.max(0, hoursBetween(firstIn.timestamp.toDate ? firstIn.timestamp.toDate() : firstIn.timestamp, lastOut.timestamp.toDate ? lastOut.timestamp.toDate() : lastOut.timestamp) - lunchHours);
@@ -143,6 +163,10 @@ async function updateDaily(now) {
     userName: profile.name,
     department: profile.department || "",
     date,
+    shiftId: shift.id,
+    shiftName: shift.name,
+    workStart: shift.workStart,
+    workEnd: shift.workEnd,
     checkInTime: firstIn.timestamp,
     checkOutTime: lastOut.timestamp,
     totalWorkHours: Number(total.toFixed(2)),
@@ -166,16 +190,49 @@ async function render() {
       <td>${fmtDateTime(row.timestamp)}</td>
       <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
       <td>${badge(row.status)}</td>
-      <td>${row.latitude?.toFixed?.(5) || "-"}, ${row.longitude?.toFixed?.(5) || "-"}</td>
+      <td>${mapLink(row.latitude, row.longitude)}</td>
     </tr>`).join("")
     : `<tr><td colspan="4" class="muted">今日尚無紀錄</td></tr>`;
 
   const firstIn = rows.find((item) => item.type === "checkIn");
   const lastOut = rows.filter((item) => item.type === "checkOut").at(-1);
   updateActionState(firstIn, lastOut);
+  updateShiftSummary(firstIn);
   qs("#todaySummary").innerHTML = `
     <span class="me-3">簽到：${fmtTime(firstIn?.timestamp)}</span>
     <span>簽退：${fmtTime(lastOut?.timestamp)}</span>`;
+}
+
+function normalizeWorkShifts(value) {
+  if (Array.isArray(value.workShifts) && value.workShifts.length) return value.workShifts;
+  return [
+    { id: "shift_0900", name: "日班 09:00", workStart: value.workStart || "09:00", workEnd: value.workEnd || "18:00" }
+  ];
+}
+
+function getSelectedShift() {
+  return getAssignedShift();
+}
+
+function findShift(id) {
+  return workShifts.find((shift) => shift.id === id);
+}
+
+function getAssignedShift() {
+  const shift = findShift(profile.defaultShiftId);
+  if (!shift) throw new Error("尚未分配班別，請聯絡管理員設定。");
+  return shift;
+}
+
+function updateShiftSummary(firstIn) {
+  const selected = firstIn
+    ? findShift(firstIn.shiftId) || {
+      name: firstIn.shiftName || "今日簽到班別",
+      workStart: firstIn.workStart || settings.workStart,
+      workEnd: firstIn.workEnd || settings.workEnd
+    }
+    : assignedShift;
+  qs("#shiftSummary").textContent = selected ? shiftText(selected) : "尚未設定班別";
 }
 
 function updateActionState(firstIn, lastOut) {
@@ -187,6 +244,14 @@ function updateActionState(firstIn, lastOut) {
   checkInBtn.classList.toggle("btn-outline-success", Boolean(firstIn));
   checkOutBtn.classList.toggle("btn-warning", Boolean(firstIn && !lastOut));
   checkOutBtn.classList.toggle("btn-outline-warning", !firstIn || Boolean(lastOut));
+
+  if (!assignedShift) {
+    hint.className = "alert alert-warning py-2 mb-3";
+    hint.textContent = "尚未分配班別，請管理員先到員工管理設定。";
+    checkInBtn.disabled = true;
+    checkOutBtn.disabled = true;
+    return;
+  }
 
   if (!firstIn) {
     hint.className = "alert alert-info py-2 mb-3";
@@ -223,6 +288,17 @@ function friendlyPunchError(error) {
   if (error?.code === 2) return "目前無法取得定位，請確認定位服務已開啟。";
   if (error?.code === 3) return "取得定位逾時，請稍後再試。";
   return error?.message || "未知錯誤";
+}
+
+function mapLink(latitude, longitude) {
+  if (typeof latitude !== "number" || typeof longitude !== "number") return "-";
+  const label = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+  const url = `https://www.google.com/maps?q=${latitude},${longitude}`;
+  return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
+}
+
+function shiftText(shift) {
+  return `${shift.name}（${shift.workStart} - ${shift.workEnd}）`;
 }
 
 function byTimestampAsc(a, b) {

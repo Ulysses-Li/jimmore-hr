@@ -44,6 +44,28 @@ export const statusBadges = {
   rejected: "danger"
 };
 
+export const leaveTypes = [
+  { value: "annual", label: "特休" },
+  { value: "compensatory", label: "補休" },
+  { value: "personal", label: "事假" },
+  { value: "sick", label: "普通傷病假" },
+  { value: "occupational_sick", label: "公傷病假" },
+  { value: "official", label: "公假" },
+  { value: "marriage", label: "婚假" },
+  { value: "bereavement", label: "喪假" },
+  { value: "menstrual", label: "生理假" },
+  { value: "maternity", label: "產假" },
+  { value: "prenatal_checkup", label: "產檢假" },
+  { value: "paternity_prenatal", label: "陪產檢及陪產假" },
+  { value: "family_care", label: "家庭照顧假" },
+  { value: "parental_leave", label: "育嬰留職停薪" },
+  { value: "pregnancy_bed_rest", label: "安胎休養" }
+];
+
+export function leaveTypeLabel(type) {
+  return leaveTypes.find((item) => item.value === type)?.label || type || "-";
+}
+
 export function qs(selector, root = document) {
   return root.querySelector(selector);
 }
@@ -177,6 +199,11 @@ export async function getWorkSettings() {
   const defaults = {
     workStart: "09:00",
     workEnd: "18:00",
+    workShifts: [
+      { id: "shift_0800", name: "早班 08:00", workStart: "08:00", workEnd: "17:00" },
+      { id: "shift_0830", name: "早班 08:30", workStart: "08:30", workEnd: "17:30" },
+      { id: "shift_0900", name: "日班 09:00", workStart: "09:00", workEnd: "18:00" }
+    ],
     lunchStart: "12:00",
     lunchEnd: "13:00",
     standardHours: 8,

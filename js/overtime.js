@@ -2,7 +2,6 @@ import {
   addDoc,
   collection,
   getDocs,
-  orderBy,
   query,
   serverTimestamp,
   where
@@ -70,22 +69,35 @@ qs("#overtimeForm").addEventListener("submit", async (event) => {
 });
 
 async function render() {
-  const snap = await getDocs(query(
-    collection(db, "overtimeRequests"),
-    where("userId", "==", profile.id),
-    orderBy("createdAt", "desc")
-  ));
-  qs("#rows").innerHTML = snap.empty
-    ? `<tr><td colspan="4" class="muted">尚無加班紀錄</td></tr>`
-    : snap.docs.map((item) => {
-      const row = item.data();
-      return `<tr>
-        <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
-        <td>${row.hours}</td>
-        <td>${row.convertToCompTime ? "是" : "否"}</td>
-        <td>${badge(row.status)}</td>
-      </tr>`;
-    }).join("");
+  try {
+    const snap = await getDocs(query(
+      collection(db, "overtimeRequests"),
+      where("userId", "==", profile.id)
+    ));
+    const rows = snap.docs
+      .map((item) => item.data())
+      .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+
+    qs("#rows").innerHTML = rows.length
+      ? rows.map((row) => {
+        return `<tr>
+          <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
+          <td>${row.hours}</td>
+          <td>${row.convertToCompTime ? "是" : "否"}</td>
+          <td>${badge(row.status)}</td>
+        </tr>`;
+      }).join("")
+      : `<tr><td colspan="4" class="muted">尚無加班紀錄</td></tr>`;
+  } catch (error) {
+    qs("#rows").innerHTML = `<tr><td colspan="4" class="text-danger">讀取加班紀錄失敗：${error.message}</td></tr>`;
+  }
+}
+
+function toMillis(value) {
+  if (!value) return 0;
+  if (value.toMillis) return value.toMillis();
+  if (value.toDate) return value.toDate().getTime();
+  return new Date(value).getTime();
 }
 
 await render();

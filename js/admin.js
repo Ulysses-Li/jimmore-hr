@@ -4,7 +4,6 @@ import {
   getDoc,
   getDocs,
   increment,
-  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -21,7 +20,8 @@ import {
   fmtDateTime,
   getWorkSettings,
   showToast,
-  roleLabels
+  roleLabels,
+  leaveTypeLabel
 } from "./app.js";
 
 const mode = document.body.dataset.adminMode;
@@ -77,20 +77,29 @@ async function renderEmployees() {
     content.innerHTML = `<div class="alert alert-warning">只有管理員可以維護員工資料。</div>`;
     return;
   }
-  const snap = await getDocs(query(collection(db, "users"), orderBy("name")));
+  const [snap, settings] = await Promise.all([
+    getDocs(collection(db, "users")),
+    getWorkSettings()
+  ]);
+  const shifts = normalizeWorkShifts(settings);
+  const users = snap.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hant"));
   content.innerHTML = `
     <div class="panel p-3">
       <div class="table-responsive"><table class="table align-middle">
-        <thead><tr><th>姓名</th><th>Email</th><th>部門</th><th>角色</th><th>特休</th><th>補休</th><th>啟用</th><th></th></tr></thead>
+        <thead><tr><th>姓名</th><th>Email</th><th>部門</th><th>角色</th><th>預設班別</th><th>特休</th><th>補休</th><th>啟用</th><th></th></tr></thead>
         <tbody>
-          ${snap.docs.map((item) => {
-            const row = item.data();
-            return `<tr data-id="${item.id}">
+          ${users.map((row) => {
+            return `<tr data-id="${row.id}">
               <td><input class="form-control form-control-sm" data-field="name" value="${row.name || ""}"></td>
               <td>${row.email || ""}</td>
               <td><input class="form-control form-control-sm" data-field="department" value="${row.department || ""}"></td>
               <td><select class="form-select form-select-sm" data-field="role">
                 ${["employee", "manager", "admin"].map((role) => `<option value="${role}" ${row.role === role ? "selected" : ""}>${roleLabels[role]}</option>`).join("")}
+              </select></td>
+              <td><select class="form-select form-select-sm" data-field="defaultShiftId">
+                ${shifts.map((shift) => `<option value="${shift.id}" ${(row.defaultShiftId || shifts[0].id) === shift.id ? "selected" : ""}>${shift.name}</option>`).join("")}
               </select></td>
               <td><input class="form-control form-control-sm" type="number" data-field="annualLeaveHours" value="${row.annualLeaveHours ?? 0}"></td>
               <td><input class="form-control form-control-sm" type="number" data-field="compensatoryLeaveHours" value="${row.compensatoryLeaveHours ?? 0}"></td>
@@ -120,39 +129,119 @@ async function renderEmployees() {
 }
 
 async function renderAttendanceReport() {
-  const snap = await getDocs(query(collection(db, "attendanceDaily"), orderBy("date", "desc")));
+  const [usersSnap, attendanceSnap, dailySnap] = await Promise.all([
+    getDocs(collection(db, "users")),
+    getDocs(collection(db, "attendance")),
+    getDocs(collection(db, "attendanceDaily"))
+  ]);
+  const users = usersSnap.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
+  const usersById = Object.fromEntries(users.map((item) => [item.id, item]));
+  const allAttendanceRows = attendanceSnap.docs
+    .map((item) => item.data())
+    .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
+  const allDailyRows = dailySnap.docs
+    .map((item) => item.data())
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+
   content.innerHTML = `
-    <div class="panel p-3">
+    <div class="panel p-3 mb-3">
+      <label class="form-label" for="attendanceUserFilter">先選員工</label>
+      <select class="form-select" id="attendanceUserFilter">
+        <option value="">請選擇員工後查看出勤紀錄</option>
+        ${users.map((user) => `<option value="${user.id}">${user.name || user.email || user.id} - ${roleLabels[user.role] || user.role || "-"} / ${user.department || "-"}</option>`).join("")}
+      </select>
+      <div class="form-text">為避免資料量過大，出勤明細與每日彙總會在選擇員工後才顯示。</div>
+    </div>
+    <div class="panel p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h5 mb-0">打卡明細</h2>
+        <span class="badge text-bg-secondary" id="attendanceDetailBadge">尚未選擇員工</span>
+      </div>
       <div class="table-responsive"><table class="table align-middle mb-0">
-        <thead><tr><th>日期</th><th>員工</th><th>部門</th><th>簽到</th><th>簽退</th><th>工時</th><th>狀態</th><th>滿 8 小時</th></tr></thead>
-        <tbody>${snap.empty ? `<tr><td colspan="8" class="muted">尚無資料</td></tr>` : snap.docs.map((item) => {
-          const row = item.data();
-          return `<tr>
-            <td>${row.date}</td>
-            <td>${row.userName}</td>
-            <td>${row.department || "-"}</td>
-            <td>${fmtDateTime(row.checkInTime)}</td>
-            <td>${fmtDateTime(row.checkOutTime)}</td>
-            <td>${row.totalWorkHours ?? 0}</td>
-            <td>${badge(row.status)}</td>
-            <td>${row.isEightHoursReached ? "是" : "否"}</td>
-          </tr>`;
-        }).join("")}</tbody>
+        <thead><tr><th>時間</th><th>員工</th><th>角色</th><th>部門</th><th>班別</th><th>類型</th><th>狀態</th><th>GPS</th></tr></thead>
+        <tbody id="attendanceDetailRows"><tr><td colspan="8" class="muted">請先選擇員工</td></tr></tbody>
+      </table></div>
+    </div>
+    <div class="panel p-3">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h5 mb-0">每日彙總</h2>
+        <span class="small muted">簽退後產生</span>
+      </div>
+      <div class="table-responsive"><table class="table align-middle mb-0">
+        <thead><tr><th>日期</th><th>員工</th><th>部門</th><th>班別</th><th>簽到</th><th>簽退</th><th>工時</th><th>狀態</th><th>滿 8 小時</th></tr></thead>
+        <tbody id="attendanceDailyRows"><tr><td colspan="9" class="muted">請先選擇員工</td></tr></tbody>
       </table></div>
     </div>`;
+
+  qs("#attendanceUserFilter").addEventListener("change", (event) => {
+    const userId = event.target.value;
+    renderSelectedAttendance(userId, usersById, allAttendanceRows, allDailyRows);
+  });
+}
+
+function renderSelectedAttendance(userId, usersById, allAttendanceRows, allDailyRows) {
+  const detailBody = qs("#attendanceDetailRows");
+  const dailyBody = qs("#attendanceDailyRows");
+  const detailBadge = qs("#attendanceDetailBadge");
+
+  if (!userId) {
+    detailBadge.className = "badge text-bg-secondary";
+    detailBadge.textContent = "尚未選擇員工";
+    detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
+    dailyBody.innerHTML = `<tr><td colspan="9" class="muted">請先選擇員工</td></tr>`;
+    return;
+  }
+
+  const user = usersById[userId] || {};
+  const attendanceRows = allAttendanceRows.filter((row) => row.userId === userId);
+  const dailyRows = allDailyRows.filter((row) => row.userId === userId);
+
+  detailBadge.className = "badge text-bg-primary";
+  detailBadge.textContent = `${user.name || user.email || "已選員工"}，${attendanceRows.length} 筆`;
+
+  detailBody.innerHTML = attendanceRows.length ? attendanceRows.map((row) => {
+    return `<tr>
+      <td>${fmtDateTime(row.timestamp)}</td>
+      <td>${row.userName || user.name || "-"}</td>
+      <td>${roleLabels[user.role] || user.role || "-"}</td>
+      <td>${row.department || user.department || "-"}</td>
+      <td>${row.shiftName || "-"}</td>
+      <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
+      <td>${badge(row.status)}</td>
+      <td>${mapLink(row.latitude, row.longitude)}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="8" class="muted">此員工尚無打卡明細</td></tr>`;
+
+  dailyBody.innerHTML = dailyRows.length ? dailyRows.map((row) => {
+    return `<tr>
+      <td>${row.date}</td>
+      <td>${row.userName}</td>
+      <td>${row.department || user.department || "-"}</td>
+      <td>${row.shiftName || "-"}</td>
+      <td>${fmtDateTime(row.checkInTime)}</td>
+      <td>${fmtDateTime(row.checkOutTime)}</td>
+      <td>${row.totalWorkHours ?? 0}</td>
+      <td>${badge(row.status)}</td>
+      <td>${row.isEightHoursReached ? "是" : "否"}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="9" class="muted">此員工尚無每日彙總</td></tr>`;
 }
 
 async function renderRequests(collectionName) {
   const isLeave = collectionName === "leaveRequests";
-  const snap = await getDocs(query(collection(db, collectionName), orderBy("createdAt", "desc")));
+  const snap = await getDocs(collection(db, collectionName));
+  const requests = snap.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
   content.innerHTML = `
     <div class="panel p-3">
       <div class="table-responsive"><table class="table align-middle mb-0">
         <thead><tr><th>申請人</th><th>類型</th><th>時間</th><th>時數</th><th>原因</th><th>狀態</th><th></th></tr></thead>
-        <tbody>${snap.empty ? `<tr><td colspan="7" class="muted">尚無資料</td></tr>` : snap.docs.map((item) => {
-          const row = item.data();
+        <tbody>${requests.length ? requests.map((row) => {
           const type = isLeave ? leaveTypeLabel(row.leaveType) : (row.convertToCompTime ? "加班轉補休" : "加班費");
-          return `<tr data-id="${item.id}" data-user-id="${row.userId}" data-hours="${row.hours}" data-kind="${row.leaveType || ""}" data-comp="${row.convertToCompTime ? "1" : "0"}">
+          return `<tr data-id="${row.id}" data-user-id="${row.userId}" data-hours="${row.hours}" data-kind="${row.leaveType || ""}" data-comp="${row.convertToCompTime ? "1" : "0"}">
             <td>${row.userName}<br><span class="muted small">${row.department || ""}</span></td>
             <td>${type}</td>
             <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
@@ -161,7 +250,7 @@ async function renderRequests(collectionName) {
             <td>${badge(row.status)}</td>
             <td>${row.status === "pending" ? `<div class="btn-group btn-group-sm"><button class="btn btn-success" data-approve>核准</button><button class="btn btn-outline-danger" data-reject>駁回</button></div>` : "-"}</td>
           </tr>`;
-        }).join("")}</tbody>
+        }).join("") : `<tr><td colspan="7" class="muted">尚無資料</td></tr>`}</tbody>
       </table></div>
     </div>`;
 
@@ -171,6 +260,20 @@ async function renderRequests(collectionName) {
   content.querySelectorAll("[data-reject]").forEach((button) => {
     button.addEventListener("click", () => reviewRequest(collectionName, button.closest("tr"), "rejected"));
   });
+}
+
+function mapLink(latitude, longitude) {
+  if (typeof latitude !== "number" || typeof longitude !== "number") return "-";
+  const label = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+  const url = `https://www.google.com/maps?q=${latitude},${longitude}`;
+  return `<a class="btn btn-sm btn-outline-primary" href="${url}" target="_blank" rel="noopener">${label}</a>`;
+}
+
+function toMillis(value) {
+  if (!value) return 0;
+  if (value.toMillis) return value.toMillis();
+  if (value.toDate) return value.toDate().getTime();
+  return new Date(value).getTime();
 }
 
 async function reviewRequest(collectionName, tr, status) {
@@ -202,24 +305,39 @@ async function renderSettings() {
     return;
   }
   const settings = await getWorkSettings();
+  const shifts = normalizeWorkShifts(settings);
   content.innerHTML = `
     <form class="panel p-3" id="settingsForm">
+      <h2 class="h5 mb-3">班別設定</h2>
       <div class="row g-3">
-        <div class="col-md-4"><label class="form-label" for="workStart">上班時間</label><input class="form-control" id="workStart" type="time" value="${settings.workStart}" required></div>
-        <div class="col-md-4"><label class="form-label" for="workEnd">下班時間</label><input class="form-control" id="workEnd" type="time" value="${settings.workEnd}" required></div>
-        <div class="col-md-4"><label class="form-label" for="standardHours">標準工時</label><input class="form-control" id="standardHours" type="number" step="0.5" value="${settings.standardHours}" required></div>
-        <div class="col-md-4"><label class="form-label" for="lunchStart">午休開始</label><input class="form-control" id="lunchStart" type="time" value="${settings.lunchStart}" required></div>
-        <div class="col-md-4"><label class="form-label" for="lunchEnd">午休結束</label><input class="form-control" id="lunchEnd" type="time" value="${settings.lunchEnd}" required></div>
-        <div class="col-md-4"><label class="form-label" for="lateGraceMinutes">遲到寬限分鐘</label><input class="form-control" id="lateGraceMinutes" type="number" value="${settings.lateGraceMinutes}" required></div>
+        ${shifts.map((shift, index) => `<div class="col-lg-4">
+          <div class="border rounded p-3 h-100">
+            <h3 class="h6 mb-3">上班時段 ${index + 1}</h3>
+            <input type="hidden" data-shift-field="id" data-shift-index="${index}" value="${shift.id}">
+            <div class="mb-2"><label class="form-label" for="shiftName${index}">班別名稱</label><input class="form-control" id="shiftName${index}" data-shift-field="name" data-shift-index="${index}" value="${shift.name}" required></div>
+            <div class="mb-2"><label class="form-label" for="shiftStart${index}">上班時間</label><input class="form-control" id="shiftStart${index}" type="time" data-shift-field="workStart" data-shift-index="${index}" value="${shift.workStart}" required></div>
+            <div><label class="form-label" for="shiftEnd${index}">下班時間</label><input class="form-control" id="shiftEnd${index}" type="time" data-shift-field="workEnd" data-shift-index="${index}" value="${shift.workEnd}" required></div>
+          </div>
+        </div>`).join("")}
+      </div>
+      <hr>
+      <h2 class="h5 mb-3">共用規則</h2>
+      <div class="row g-3">
+        <div class="col-md-3"><label class="form-label" for="standardHours">標準工時</label><input class="form-control" id="standardHours" type="number" step="0.5" value="${settings.standardHours}" required></div>
+        <div class="col-md-3"><label class="form-label" for="lunchStart">午休開始</label><input class="form-control" id="lunchStart" type="time" value="${settings.lunchStart}" required></div>
+        <div class="col-md-3"><label class="form-label" for="lunchEnd">午休結束</label><input class="form-control" id="lunchEnd" type="time" value="${settings.lunchEnd}" required></div>
+        <div class="col-md-3"><label class="form-label" for="lateGraceMinutes">遲到寬限分鐘</label><input class="form-control" id="lateGraceMinutes" type="number" value="${settings.lateGraceMinutes}" required></div>
       </div>
       <button class="btn btn-primary mt-3">儲存設定</button>
     </form>`;
 
   qs("#settingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const workShifts = readShiftSettings();
     await setDoc(doc(db, "workSettings", "default"), {
-      workStart: qs("#workStart").value,
-      workEnd: qs("#workEnd").value,
+      workStart: workShifts[0].workStart,
+      workEnd: workShifts[0].workEnd,
+      workShifts,
       lunchStart: qs("#lunchStart").value,
       lunchEnd: qs("#lunchEnd").value,
       standardHours: Number(qs("#standardHours").value),
@@ -231,12 +349,26 @@ async function renderSettings() {
   });
 }
 
-function leaveTypeLabel(type) {
-  return {
-    annual: "特休",
-    compensatory: "補休",
-    personal: "事假",
-    sick: "病假",
-    official: "公假"
-  }[type] || type;
+function normalizeWorkShifts(settings) {
+  const fallback = [
+    { id: "shift_0800", name: "早班 08:00", workStart: "08:00", workEnd: "17:00" },
+    { id: "shift_0830", name: "早班 08:30", workStart: "08:30", workEnd: "17:30" },
+    { id: "shift_0900", name: "日班 09:00", workStart: settings.workStart || "09:00", workEnd: settings.workEnd || "18:00" }
+  ];
+  const source = Array.isArray(settings.workShifts) && settings.workShifts.length
+    ? settings.workShifts
+    : fallback;
+  return [0, 1, 2].map((index) => source[index] || fallback[index]);
+}
+
+function readShiftSettings() {
+  return [0, 1, 2].map((index) => {
+    const getValue = (field) => qs(`[data-shift-index="${index}"][data-shift-field="${field}"]`).value.trim();
+    return {
+      id: getValue("id") || `shift_${index + 1}`,
+      name: getValue("name"),
+      workStart: getValue("workStart"),
+      workEnd: getValue("workEnd")
+    };
+  });
 }

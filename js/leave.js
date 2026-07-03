@@ -2,12 +2,11 @@ import {
   addDoc,
   collection,
   getDocs,
-  orderBy,
   query,
   serverTimestamp,
   where
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { db, requireAuth, bindLogout, pageChrome, qs, badge, fmtDateTime, hoursBetween, showToast } from "./app.js";
+import { db, requireAuth, bindLogout, pageChrome, qs, badge, fmtDateTime, hoursBetween, showToast, leaveTypes, leaveTypeLabel } from "./app.js";
 
 document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("請假申請", "建立請假單並追蹤審核狀態")}</div>`;
 const profile = await requireAuth();
@@ -21,11 +20,7 @@ qs("#pageContent").innerHTML = `
         <div class="mb-3">
           <label class="form-label" for="leaveType">假別</label>
           <select class="form-select" id="leaveType" required>
-            <option value="annual">特休</option>
-            <option value="compensatory">補休</option>
-            <option value="personal">事假</option>
-            <option value="sick">病假</option>
-            <option value="official">公假</option>
+            ${leaveTypes.map((item) => `<option value="${item.value}">${item.label}</option>`).join("")}
           </select>
         </div>
         <div class="mb-3"><label class="form-label" for="startTime">開始時間</label><input class="form-control" id="startTime" type="datetime-local" required></div>
@@ -44,14 +39,6 @@ qs("#pageContent").innerHTML = `
       </div>
     </div>
   </div>`;
-
-const leaveTypeLabels = {
-  annual: "特休",
-  compensatory: "補休",
-  personal: "事假",
-  sick: "病假",
-  official: "公假"
-};
 
 qs("#leaveForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -92,22 +79,35 @@ qs("#leaveForm").addEventListener("submit", async (event) => {
 });
 
 async function render() {
-  const snap = await getDocs(query(
-    collection(db, "leaveRequests"),
-    where("userId", "==", profile.id),
-    orderBy("createdAt", "desc")
-  ));
-  qs("#rows").innerHTML = snap.empty
-    ? `<tr><td colspan="4" class="muted">尚無請假紀錄</td></tr>`
-    : snap.docs.map((item) => {
-      const row = item.data();
-      return `<tr>
-        <td>${leaveTypeLabels[row.leaveType] || row.leaveType}</td>
-        <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
-        <td>${row.hours}</td>
-        <td>${badge(row.status)}</td>
-      </tr>`;
-    }).join("");
+  try {
+    const snap = await getDocs(query(
+      collection(db, "leaveRequests"),
+      where("userId", "==", profile.id)
+    ));
+    const rows = snap.docs
+      .map((item) => item.data())
+      .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+
+    qs("#rows").innerHTML = rows.length
+      ? rows.map((row) => {
+        return `<tr>
+          <td>${leaveTypeLabel(row.leaveType)}</td>
+          <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
+          <td>${row.hours}</td>
+          <td>${badge(row.status)}</td>
+        </tr>`;
+      }).join("")
+      : `<tr><td colspan="4" class="muted">尚無請假紀錄</td></tr>`;
+  } catch (error) {
+    qs("#rows").innerHTML = `<tr><td colspan="4" class="text-danger">讀取請假紀錄失敗：${error.message}</td></tr>`;
+  }
+}
+
+function toMillis(value) {
+  if (!value) return 0;
+  if (value.toMillis) return value.toMillis();
+  if (value.toDate) return value.toDate().getTime();
+  return new Date(value).getTime();
 }
 
 await render();

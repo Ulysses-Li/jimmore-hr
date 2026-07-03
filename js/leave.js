@@ -29,8 +29,8 @@ qs("#pageContent").innerHTML = `
         <div class="mb-3"><label class="form-label" for="startTime">開始時間</label><input class="form-control" id="startTime" type="datetime-local" required></div>
         <div class="mb-3">
           <label class="form-label" for="endTime">結束時間</label>
-          <input class="form-control" id="endTime" type="datetime-local" required>
-          <div class="form-text">只計算班別上班時間，會自動扣除午休、六日與系統設定休息日；每天最多 ${settings.standardHours || 8} 小時。</div>
+          <input class="form-control" id="endTime" type="datetime-local" step="3600" required>
+          <div class="form-text">只計算班別上班時間，會自動扣除午休、六日與系統設定休息日；請假時數必須為整數小時，每天最多 ${settings.standardHours || 8} 小時。</div>
         </div>
         <div class="alert alert-secondary py-2" id="leaveHoursPreview">請選擇開始與結束時間。</div>
         <div class="mb-3"><label class="form-label" for="reason">原因</label><textarea class="form-control" id="reason" rows="3" required></textarea></div>
@@ -59,6 +59,10 @@ qs("#leaveForm").addEventListener("submit", async (event) => {
   const hours = calculateWorkingLeaveHours(start, end);
   if (hours < 1) {
     showToast("有效請假時間最少要 1 小時，且必須落在員工班別上班時間內", "warning");
+    return;
+  }
+  if (!isWholeHourValue(hours)) {
+    showToast("請假時數必須為整數小時，請調整結束時間", "warning");
     return;
   }
   const type = qs("#leaveType").value;
@@ -133,6 +137,7 @@ function syncMinimumEndTime() {
   const minEnd = new Date(startInput.value);
   minEnd.setHours(minEnd.getHours() + 1);
   endInput.min = toDatetimeLocalValue(minEnd);
+  endInput.step = "3600";
   if (!endInput.value || new Date(endInput.value) < minEnd) {
     endInput.value = endInput.min;
   }
@@ -155,9 +160,11 @@ function updateLeaveHoursPreview() {
     return;
   }
   const hours = calculateWorkingLeaveHours(new Date(startInput.value), new Date(endInput.value));
-  preview.className = hours >= 1 ? "alert alert-info py-2" : "alert alert-warning py-2";
   const skippedDays = countSkippedRestDays(new Date(startInput.value), new Date(endInput.value));
-  preview.textContent = `預計請假時數：${hours} 小時（班別 ${assignedShift.name}，午休 ${settings.lunchStart} - ${settings.lunchEnd}、六日/休息日已扣除${skippedDays ? `，略過 ${skippedDays} 天休息日` : ""}）`;
+  const wholeHour = isWholeHourValue(hours);
+  preview.className = hours >= 1 && wholeHour ? "alert alert-info py-2" : "alert alert-warning py-2";
+  const unitWarning = hours >= 1 && !wholeHour ? "；請假時數必須為整數小時，請調整結束時間" : "";
+  preview.textContent = `預計請假時數：${hours} 小時（班別 ${assignedShift.name}，午休 ${settings.lunchStart} - ${settings.lunchEnd}、六日/休息日已扣除${skippedDays ? `，略過 ${skippedDays} 天休息日` : ""}）${unitWarning}`;
 }
 
 function calculateWorkingLeaveHours(start, end) {
@@ -219,6 +226,10 @@ function isWeekend(date) {
 
 function configuredHolidayDates() {
   return new Set(Array.isArray(settings.holidayDates) ? settings.holidayDates : []);
+}
+
+function isWholeHourValue(value) {
+  return Math.abs(value - Math.round(value)) < 0.0001;
 }
 
 function overlapHours(start, end, blockStart, blockEnd) {

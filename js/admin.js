@@ -418,6 +418,10 @@ async function reviewRequest(collectionName, tr, status) {
   const id = tr.dataset.id;
   const userId = tr.dataset.userId;
   const hours = Number(tr.dataset.hours || 0);
+  if (status === "approved" && collectionName === "leaveRequests" && !isWholeHourValue(hours)) {
+    showToast("請假時數必須為整數小時，請先駁回並請員工重新送單", "warning");
+    return;
+  }
   await updateDoc(doc(db, collectionName, id), {
     status,
     approvedBy: adminProfile.id,
@@ -529,6 +533,10 @@ function isTimeRangeValid(start, end) {
 function timeToMinutes(value) {
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+function isWholeHourValue(value) {
+  return Math.abs(value - Math.round(value)) < 0.0001;
 }
 
 function formatHolidayDates(value) {

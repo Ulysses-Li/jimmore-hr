@@ -18,7 +18,11 @@ qs("#pageContent").innerHTML = `
       <form class="panel p-3" id="overtimeForm">
         <h2 class="h5 mb-3">新增加班單</h2>
         <div class="mb-3"><label class="form-label" for="startTime">開始時間</label><input class="form-control" id="startTime" type="datetime-local" required></div>
-        <div class="mb-3"><label class="form-label" for="endTime">結束時間</label><input class="form-control" id="endTime" type="datetime-local" required></div>
+        <div class="mb-3">
+          <label class="form-label" for="endTime">結束時間</label>
+          <input class="form-control" id="endTime" type="datetime-local" required>
+          <div class="form-text">最少加班 1 小時。</div>
+        </div>
         <div class="mb-3"><label class="form-label" for="reason">原因</label><textarea class="form-control" id="reason" rows="3" required></textarea></div>
         <div class="form-check form-switch mb-3">
           <input class="form-check-input" type="checkbox" id="convertToCompTime" checked>
@@ -43,8 +47,8 @@ qs("#overtimeForm").addEventListener("submit", async (event) => {
   const start = new Date(qs("#startTime").value);
   const end = new Date(qs("#endTime").value);
   const hours = hoursBetween(start, end);
-  if (hours <= 0) {
-    showToast("結束時間必須晚於開始時間", "warning");
+  if (hours < 1) {
+    showToast("加班時間最少要 1 小時", "warning");
     return;
   }
   await addDoc(collection(db, "overtimeRequests"), {
@@ -100,4 +104,22 @@ function toMillis(value) {
   return new Date(value).getTime();
 }
 
+function syncMinimumEndTime() {
+  const startInput = qs("#startTime");
+  const endInput = qs("#endTime");
+  if (!startInput.value) return;
+  const minEnd = new Date(startInput.value);
+  minEnd.setHours(minEnd.getHours() + 1);
+  endInput.min = toDatetimeLocalValue(minEnd);
+  if (!endInput.value || new Date(endInput.value) < minEnd) {
+    endInput.value = endInput.min;
+  }
+}
+
+function toDatetimeLocalValue(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+qs("#startTime").addEventListener("change", syncMinimumEndTime);
 await render();

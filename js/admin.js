@@ -85,8 +85,12 @@ async function renderEmployees() {
   const users = snap.docs
     .map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hant"));
+  const departments = buildDepartmentOptions(users);
   content.innerHTML = `
     <div class="panel p-3">
+      <datalist id="departmentOptions">
+        ${departments.map((department) => `<option value="${department}"></option>`).join("")}
+      </datalist>
       <div class="table-responsive"><table class="table align-middle">
         <thead><tr><th>姓名</th><th>Email</th><th>部門</th><th>角色</th><th>預設班別</th><th>特休</th><th>補休</th><th>啟用</th><th></th></tr></thead>
         <tbody>
@@ -94,7 +98,7 @@ async function renderEmployees() {
             return `<tr data-id="${row.id}">
               <td><input class="form-control form-control-sm" data-field="name" value="${row.name || ""}"></td>
               <td>${row.email || ""}</td>
-              <td><input class="form-control form-control-sm" data-field="department" value="${row.department || ""}"></td>
+              <td><input class="form-control form-control-sm" data-field="department" list="departmentOptions" value="${row.department || ""}" placeholder="選擇或輸入部門"></td>
               <td><select class="form-select form-select-sm" data-field="role">
                 ${["employee", "manager", "admin"].map((role) => `<option value="${role}" ${row.role === role ? "selected" : ""}>${roleLabels[role]}</option>`).join("")}
               </select></td>
@@ -128,6 +132,12 @@ async function renderEmployees() {
   });
 }
 
+function buildDepartmentOptions(users) {
+  const defaults = ["管理", "產品管理", "工程", "研發", "製造", "品保", "生管", "採購", "財務", "會計", "人資", "行政", "業務", "行銷", "內銷", "外銷", "總經理"];
+  const existing = users.map((user) => user.department).filter(Boolean);
+  return Array.from(new Set([...existing, ...defaults])).sort((a, b) => a.localeCompare(b, "zh-Hant"));
+}
+
 async function renderAttendanceReport() {
   const [usersSnap, attendanceSnap, dailySnap] = await Promise.all([
     getDocs(collection(db, "users")),
@@ -138,6 +148,7 @@ async function renderAttendanceReport() {
     .map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
   const usersById = Object.fromEntries(users.map((item) => [item.id, item]));
+  const departments = Array.from(new Set(users.map((user) => user.department || "未分部門"))).sort((a, b) => a.localeCompare(b, "zh-Hant"));
   const allAttendanceRows = attendanceSnap.docs
     .map((item) => item.data())
     .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
@@ -147,12 +158,22 @@ async function renderAttendanceReport() {
 
   content.innerHTML = `
     <div class="panel p-3 mb-3">
-      <label class="form-label" for="attendanceUserFilter">先選員工</label>
-      <select class="form-select" id="attendanceUserFilter">
-        <option value="">請選擇員工後查看出勤紀錄</option>
-        ${users.map((user) => `<option value="${user.id}">${user.name || user.email || user.id} - ${roleLabels[user.role] || user.role || "-"} / ${user.department || "-"}</option>`).join("")}
-      </select>
-      <div class="form-text">為避免資料量過大，出勤明細與每日彙總會在選擇員工後才顯示。</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="attendanceDepartmentFilter">先選部門</label>
+          <select class="form-select" id="attendanceDepartmentFilter">
+            <option value="">請選擇部門</option>
+            ${departments.map((department) => `<option value="${department}">${department}</option>`).join("")}
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="attendanceUserFilter">再選人員</label>
+          <select class="form-select" id="attendanceUserFilter" disabled>
+            <option value="">請先選擇部門</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-text">為避免資料量過大，出勤明細與每日彙總會在選擇部門與人員後才顯示。</div>
     </div>
     <div class="panel p-3 mb-3">
       <div class="d-flex justify-content-between align-items-center mb-3">
@@ -175,10 +196,29 @@ async function renderAttendanceReport() {
       </table></div>
     </div>`;
 
+  qs("#attendanceDepartmentFilter").addEventListener("change", (event) => {
+    renderAttendanceUserOptions(event.target.value, users);
+    renderSelectedAttendance("", usersById, allAttendanceRows, allDailyRows);
+  });
   qs("#attendanceUserFilter").addEventListener("change", (event) => {
     const userId = event.target.value;
     renderSelectedAttendance(userId, usersById, allAttendanceRows, allDailyRows);
   });
+}
+
+function renderAttendanceUserOptions(department, users) {
+  const userSelect = qs("#attendanceUserFilter");
+  if (!department) {
+    userSelect.disabled = true;
+    userSelect.innerHTML = `<option value="">請先選擇部門</option>`;
+    return;
+  }
+  const filteredUsers = users.filter((user) => (user.department || "未分部門") === department);
+  userSelect.disabled = false;
+  userSelect.innerHTML = `
+    <option value="">請選擇人員</option>
+    ${filteredUsers.map((user) => `<option value="${user.id}">${user.name || user.email || user.id} - ${roleLabels[user.role] || user.role || "-"}</option>`).join("")}
+  `;
 }
 
 function renderSelectedAttendance(userId, usersById, allAttendanceRows, allDailyRows) {
@@ -334,6 +374,11 @@ async function renderSettings() {
   qs("#settingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const workShifts = readShiftSettings();
+    const invalidShift = workShifts.find((shift) => !isTimeRangeValid(shift.workStart, shift.workEnd));
+    if (invalidShift) {
+      showToast(`${invalidShift.name} 的下班時間必須晚於上班時間`, "warning");
+      return;
+    }
     await setDoc(doc(db, "workSettings", "default"), {
       workStart: workShifts[0].workStart,
       workEnd: workShifts[0].workEnd,
@@ -371,4 +416,13 @@ function readShiftSettings() {
       workEnd: getValue("workEnd")
     };
   });
+}
+
+function isTimeRangeValid(start, end) {
+  return timeToMinutes(end) > timeToMinutes(start);
+}
+
+function timeToMinutes(value) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
 }

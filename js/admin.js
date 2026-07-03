@@ -18,8 +18,11 @@ import {
   qs,
   badge,
   fmtDateTime,
+  fmtTime,
   getWorkSettings,
+  hoursBetween,
   showToast,
+  timeToDate,
   roleLabels,
   leaveTypeLabel
 } from "./app.js";
@@ -139,10 +142,10 @@ function buildDepartmentOptions(users) {
 }
 
 async function renderAttendanceReport() {
-  const [usersSnap, attendanceSnap, dailySnap] = await Promise.all([
+  const [usersSnap, attendanceSnap, settings] = await Promise.all([
     getDocs(collection(db, "users")),
     getDocs(collection(db, "attendance")),
-    getDocs(collection(db, "attendanceDaily"))
+    getWorkSettings()
   ]);
   const users = usersSnap.docs
     .map((item) => ({ id: item.id, ...item.data() }))
@@ -152,9 +155,6 @@ async function renderAttendanceReport() {
   const allAttendanceRows = attendanceSnap.docs
     .map((item) => item.data())
     .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
-  const allDailyRows = dailySnap.docs
-    .map((item) => item.data())
-    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 
   content.innerHTML = `
     <div class="panel p-3 mb-3">
@@ -177,32 +177,32 @@ async function renderAttendanceReport() {
     </div>
     <div class="panel p-3 mb-3">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h5 mb-0">打卡明細</h2>
-        <span class="badge text-bg-secondary" id="attendanceDetailBadge">尚未選擇員工</span>
+        <h2 class="h5 mb-0">出缺勤彙總</h2>
+        <span class="badge text-bg-secondary" id="attendanceSummaryBadge">尚未選擇員工</span>
       </div>
       <div class="table-responsive"><table class="table align-middle mb-0">
+        <thead><tr><th>日期</th><th>員工</th><th>部門</th><th>班別</th><th>簽到</th><th>簽退</th><th>工時</th><th>遲到</th><th>早退</th><th>狀態</th></tr></thead>
+        <tbody id="attendanceSummaryRows"><tr><td colspan="10" class="muted">請先選擇員工</td></tr></tbody>
+      </table></div>
+    </div>
+    <details class="panel p-3">
+      <summary class="d-flex justify-content-between align-items-center">
+        <span class="h5 mb-0">原始打卡明細（查核用）</span>
+        <span class="badge text-bg-secondary" id="attendanceDetailBadge">尚未選擇員工</span>
+      </summary>
+      <div class="table-responsive mt-3"><table class="table align-middle mb-0">
         <thead><tr><th>時間</th><th>員工</th><th>角色</th><th>部門</th><th>班別</th><th>類型</th><th>狀態</th><th>GPS</th></tr></thead>
         <tbody id="attendanceDetailRows"><tr><td colspan="8" class="muted">請先選擇員工</td></tr></tbody>
       </table></div>
-    </div>
-    <div class="panel p-3">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h5 mb-0">每日彙總</h2>
-        <span class="small muted">簽退後產生</span>
-      </div>
-      <div class="table-responsive"><table class="table align-middle mb-0">
-        <thead><tr><th>日期</th><th>員工</th><th>部門</th><th>班別</th><th>簽到</th><th>簽退</th><th>工時</th><th>狀態</th><th>滿 8 小時</th></tr></thead>
-        <tbody id="attendanceDailyRows"><tr><td colspan="9" class="muted">請先選擇員工</td></tr></tbody>
-      </table></div>
-    </div>`;
+    </details>`;
 
   qs("#attendanceDepartmentFilter").addEventListener("change", (event) => {
     renderAttendanceUserOptions(event.target.value, users);
-    renderSelectedAttendance("", usersById, allAttendanceRows, allDailyRows);
+    renderSelectedAttendance("", usersById, allAttendanceRows, settings);
   });
   qs("#attendanceUserFilter").addEventListener("change", (event) => {
     const userId = event.target.value;
-    renderSelectedAttendance(userId, usersById, allAttendanceRows, allDailyRows);
+    renderSelectedAttendance(userId, usersById, allAttendanceRows, settings);
   });
 }
 
@@ -221,25 +221,45 @@ function renderAttendanceUserOptions(department, users) {
   `;
 }
 
-function renderSelectedAttendance(userId, usersById, allAttendanceRows, allDailyRows) {
+function renderSelectedAttendance(userId, usersById, allAttendanceRows, settings) {
+  const summaryBody = qs("#attendanceSummaryRows");
+  const summaryBadge = qs("#attendanceSummaryBadge");
   const detailBody = qs("#attendanceDetailRows");
-  const dailyBody = qs("#attendanceDailyRows");
   const detailBadge = qs("#attendanceDetailBadge");
 
   if (!userId) {
+    summaryBadge.className = "badge text-bg-secondary";
+    summaryBadge.textContent = "尚未選擇員工";
     detailBadge.className = "badge text-bg-secondary";
     detailBadge.textContent = "尚未選擇員工";
+    summaryBody.innerHTML = `<tr><td colspan="10" class="muted">請先選擇員工</td></tr>`;
     detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
-    dailyBody.innerHTML = `<tr><td colspan="9" class="muted">請先選擇員工</td></tr>`;
     return;
   }
 
   const user = usersById[userId] || {};
   const attendanceRows = allAttendanceRows.filter((row) => row.userId === userId);
-  const dailyRows = allDailyRows.filter((row) => row.userId === userId);
+  const summaryRows = buildAttendanceSummaryRows(attendanceRows, user, settings);
 
+  summaryBadge.className = "badge text-bg-primary";
+  summaryBadge.textContent = `${user.name || user.email || "已選員工"}，${summaryRows.length} 天`;
   detailBadge.className = "badge text-bg-primary";
   detailBadge.textContent = `${user.name || user.email || "已選員工"}，${attendanceRows.length} 筆`;
+
+  summaryBody.innerHTML = summaryRows.length ? summaryRows.map((row) => {
+    return `<tr>
+      <td>${row.date}</td>
+      <td>${row.userName}</td>
+      <td>${row.department}</td>
+      <td>${row.shiftName}</td>
+      <td>${row.checkInText}</td>
+      <td>${row.checkOutText}</td>
+      <td>${row.workHours}</td>
+      <td>${row.lateMinutes ? `${row.lateMinutes} 分` : "-"}</td>
+      <td>${row.earlyLeaveMinutes ? `${row.earlyLeaveMinutes} 分` : "-"}</td>
+      <td>${summaryStatusBadge(row)}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="10" class="muted">此員工尚無出勤資料</td></tr>`;
 
   detailBody.innerHTML = attendanceRows.length ? attendanceRows.map((row) => {
     return `<tr>
@@ -253,20 +273,98 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allDaily
       <td>${mapLink(row.latitude, row.longitude)}</td>
     </tr>`;
   }).join("") : `<tr><td colspan="8" class="muted">此員工尚無打卡明細</td></tr>`;
+}
 
-  dailyBody.innerHTML = dailyRows.length ? dailyRows.map((row) => {
-    return `<tr>
-      <td>${row.date}</td>
-      <td>${row.userName}</td>
-      <td>${row.department || user.department || "-"}</td>
-      <td>${row.shiftName || "-"}</td>
-      <td>${fmtDateTime(row.checkInTime)}</td>
-      <td>${fmtDateTime(row.checkOutTime)}</td>
-      <td>${row.totalWorkHours ?? 0}</td>
-      <td>${badge(row.status)}</td>
-      <td>${row.isEightHoursReached ? "是" : "否"}</td>
-    </tr>`;
-  }).join("") : `<tr><td colspan="9" class="muted">此員工尚無每日彙總</td></tr>`;
+function buildAttendanceSummaryRows(attendanceRows, user, settings) {
+  const groups = new Map();
+  attendanceRows.forEach((row) => {
+    const date = row.date || dateKeyFromTimestamp(row.timestamp);
+    if (!date) return;
+    if (!groups.has(date)) groups.set(date, []);
+    groups.get(date).push(row);
+  });
+
+  return Array.from(groups.entries())
+    .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
+    .map(([date, rows]) => {
+      const ordered = [...rows].sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp));
+      const checkIns = ordered.filter((row) => row.type === "checkIn");
+      const checkOuts = ordered.filter((row) => row.type === "checkOut");
+      const firstIn = checkIns[0] || null;
+      const lastOut = checkOuts[checkOuts.length - 1] || null;
+      const source = firstIn || lastOut || ordered[0] || {};
+      const shift = resolveReportShift(source, user, settings);
+      const checkInDate = firstIn ? timestampToDate(firstIn.timestamp) : null;
+      const checkOutDate = lastOut ? timestampToDate(lastOut.timestamp) : null;
+      const workHours = calculateReportWorkHours(date, checkInDate, checkOutDate, settings);
+      const lateMinutes = checkInDate ? minutesAfter(checkInDate, timeToDate(date, shift.workStart || settings.workStart || "09:00")) : 0;
+      const earlyLeaveMinutes = checkOutDate ? minutesAfter(timeToDate(date, shift.workEnd || settings.workEnd || "18:00"), checkOutDate) : 0;
+      const status = resolveReportStatus(firstIn, lastOut, workHours, lateMinutes, earlyLeaveMinutes, settings);
+
+      return {
+        date,
+        userName: source.userName || user.name || "-",
+        department: source.department || user.department || "-",
+        shiftName: shift.name || source.shiftName || "-",
+        checkInText: checkInDate ? fmtTime(checkInDate) : "-",
+        checkOutText: checkOutDate ? fmtTime(checkOutDate) : "-",
+        workHours,
+        lateMinutes,
+        earlyLeaveMinutes,
+        status
+      };
+    });
+}
+
+function resolveReportShift(row, user, settings) {
+  const shifts = normalizeWorkShifts(settings);
+  const id = row.shiftId || user.defaultShiftId;
+  const shift = shifts.find((item) => item.id === id);
+  if (shift) return shift;
+  return {
+    id: row.shiftId || "default",
+    name: row.shiftName || settings.shiftName || "預設班別",
+    workStart: row.workStart || settings.workStart || "09:00",
+    workEnd: row.workEnd || settings.workEnd || "18:00"
+  };
+}
+
+function calculateReportWorkHours(date, checkInDate, checkOutDate, settings) {
+  if (!checkInDate || !checkOutDate || checkOutDate <= checkInDate) return 0;
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const lunchOverlap = Math.max(0, Math.min(checkOutDate, lunchEnd) - Math.max(checkInDate, lunchStart)) / 36e5;
+  return Number(Math.max(0, hoursBetween(checkInDate, checkOutDate) - lunchOverlap).toFixed(2));
+}
+
+function resolveReportStatus(firstIn, lastOut, workHours, lateMinutes, earlyLeaveMinutes, settings) {
+  if (!firstIn || !lastOut) return "incomplete";
+  if (lateMinutes > 0) return "late";
+  if (earlyLeaveMinutes > 0) return "earlyLeave";
+  if (workHours < Number(settings.standardHours || 8)) return "workTimeNotEnough";
+  return "normal";
+}
+
+function summaryStatusBadge(row) {
+  if (row.status === "incomplete") return `<span class="badge text-bg-secondary">資料不完整</span>`;
+  return badge(row.status);
+}
+
+function minutesAfter(later, earlier) {
+  return Math.max(0, Math.ceil((later.getTime() - earlier.getTime()) / 60000));
+}
+
+function timestampToDate(value) {
+  if (!value) return null;
+  if (value.toDate) return value.toDate();
+  return new Date(value);
+}
+
+function dateKeyFromTimestamp(value) {
+  const date = timestampToDate(value);
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
 }
 
 async function renderRequests(collectionName) {
@@ -367,6 +465,11 @@ async function renderSettings() {
         <div class="col-md-3"><label class="form-label" for="lunchStart">午休開始</label><input class="form-control" id="lunchStart" type="time" value="${settings.lunchStart}" required></div>
         <div class="col-md-3"><label class="form-label" for="lunchEnd">午休結束</label><input class="form-control" id="lunchEnd" type="time" value="${settings.lunchEnd}" required></div>
         <div class="col-md-3"><label class="form-label" for="lateGraceMinutes">遲到寬限分鐘</label><input class="form-control" id="lateGraceMinutes" type="number" value="${settings.lateGraceMinutes}" required></div>
+        <div class="col-12">
+          <label class="form-label" for="holidayDates">休息日 / 國定假日</label>
+          <textarea class="form-control" id="holidayDates" rows="4" placeholder="每行一個日期，例如 2026-01-01">${formatHolidayDates(settings.holidayDates)}</textarea>
+          <div class="form-text">六日會自動排除；這裡只需要填政府公告國定假日、補假或公司指定休息日，格式 YYYY-MM-DD。</div>
+        </div>
       </div>
       <button class="btn btn-primary mt-3">儲存設定</button>
     </form>`;
@@ -385,6 +488,7 @@ async function renderSettings() {
       workShifts,
       lunchStart: qs("#lunchStart").value,
       lunchEnd: qs("#lunchEnd").value,
+      holidayDates: readHolidayDates(),
       standardHours: Number(qs("#standardHours").value),
       lateGraceMinutes: Number(qs("#lateGraceMinutes").value),
       updatedAt: serverTimestamp(),
@@ -425,4 +529,18 @@ function isTimeRangeValid(start, end) {
 function timeToMinutes(value) {
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+function formatHolidayDates(value) {
+  if (!Array.isArray(value)) return "";
+  return value.filter(Boolean).sort().join("\n");
+}
+
+function readHolidayDates() {
+  return qs("#holidayDates").value
+    .split(/\s|,|，/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item, index, array) => /^\d{4}-\d{2}-\d{2}$/.test(item) && array.indexOf(item) === index)
+    .sort();
 }

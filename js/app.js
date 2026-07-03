@@ -206,6 +206,7 @@ export async function getWorkSettings() {
     ],
     lunchStart: "12:00",
     lunchEnd: "13:00",
+    holidayDates: [],
     standardHours: 8,
     lateGraceMinutes: 5,
     updatedAt: serverTimestamp(),

@@ -30,7 +30,7 @@ qs("#pageContent").innerHTML = `
         <div class="mb-3">
           <label class="form-label" for="endTime">結束時間</label>
           <input class="form-control" id="endTime" type="datetime-local" required>
-          <div class="form-text">只計算班別上班時間，會自動扣除午休；每天最多 ${settings.standardHours || 8} 小時。</div>
+          <div class="form-text">只計算班別上班時間，會自動扣除午休、六日與系統設定休息日；每天最多 ${settings.standardHours || 8} 小時。</div>
         </div>
         <div class="alert alert-secondary py-2" id="leaveHoursPreview">請選擇開始與結束時間。</div>
         <div class="mb-3"><label class="form-label" for="reason">原因</label><textarea class="form-control" id="reason" rows="3" required></textarea></div>
@@ -156,7 +156,8 @@ function updateLeaveHoursPreview() {
   }
   const hours = calculateWorkingLeaveHours(new Date(startInput.value), new Date(endInput.value));
   preview.className = hours >= 1 ? "alert alert-info py-2" : "alert alert-warning py-2";
-  preview.textContent = `預計請假時數：${hours} 小時（班別 ${assignedShift.name}，午休 ${settings.lunchStart} - ${settings.lunchEnd} 已扣除）`;
+  const skippedDays = countSkippedRestDays(new Date(startInput.value), new Date(endInput.value));
+  preview.textContent = `預計請假時數：${hours} 小時（班別 ${assignedShift.name}，午休 ${settings.lunchStart} - ${settings.lunchEnd}、六日/休息日已扣除${skippedDays ? `，略過 ${skippedDays} 天休息日` : ""}）`;
 }
 
 function calculateWorkingLeaveHours(start, end) {
@@ -169,6 +170,10 @@ function calculateWorkingLeaveHours(start, end) {
 
   while (cursor <= finalDay) {
     const dateKey = todayKey(cursor);
+    if (isRestDay(cursor, dateKey)) {
+      cursor.setDate(cursor.getDate() + 1);
+      continue;
+    }
     const workStart = timeToDate(dateKey, assignedShift.workStart);
     const workEnd = timeToDate(dateKey, assignedShift.workEnd);
     const lunchStart = timeToDate(dateKey, settings.lunchStart);
@@ -184,6 +189,36 @@ function calculateWorkingLeaveHours(start, end) {
   }
 
   return Number(total.toFixed(2));
+}
+
+function countSkippedRestDays(start, end) {
+  if (!(start instanceof Date) || !(end instanceof Date) || end <= start) return 0;
+  let count = 0;
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const finalDay = new Date(end);
+  finalDay.setHours(0, 0, 0, 0);
+
+  while (cursor <= finalDay) {
+    const dateKey = todayKey(cursor);
+    if (isRestDay(cursor, dateKey)) count += 1;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return count;
+}
+
+function isRestDay(date, dateKey = todayKey(date)) {
+  return isWeekend(date) || configuredHolidayDates().has(dateKey);
+}
+
+function isWeekend(date) {
+  const day = date.getDay();
+  return day === 0 || day === 6;
+}
+
+function configuredHolidayDates() {
+  return new Set(Array.isArray(settings.holidayDates) ? settings.holidayDates : []);
 }
 
 function overlapHours(start, end, blockStart, blockEnd) {

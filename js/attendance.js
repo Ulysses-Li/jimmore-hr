@@ -3,8 +3,6 @@ import {
   collection,
   doc,
   getDocs,
-  limit,
-  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -36,9 +34,13 @@ qs("#pageContent").innerHTML = `
     <div class="col-lg-5">
       <div class="panel p-3">
         <h2 class="h5 mb-3">今日操作</h2>
+        <div class="alert alert-info py-2 mb-3" id="attendanceHint">正在讀取今日狀態...</div>
+        <div class="small muted mb-3">
+          打卡需要瀏覽器定位權限。若看到定位被拒絕，請點網址列左側圖示，將位置權限改為允許後重新整理。
+        </div>
         <div class="d-grid gap-2">
-          <button class="btn btn-primary btn-lg" id="checkInBtn">簽到</button>
-          <button class="btn btn-outline-primary btn-lg" id="checkOutBtn">簽退</button>
+          <button class="btn btn-success btn-lg" id="checkInBtn">上班簽到</button>
+          <button class="btn btn-warning btn-lg" id="checkOutBtn">下班簽退</button>
         </div>
         <hr>
         <dl class="row mb-0">
@@ -86,6 +88,7 @@ function resolveStatus(type, at) {
 }
 
 async function punch(type) {
+  setPunching(true, type);
   try {
     const at = new Date();
     const pos = await getPosition();
@@ -105,10 +108,12 @@ async function punch(type) {
     };
     await addDoc(collection(db, "attendance"), record);
     if (type === "checkOut") await updateDaily(at);
-    showToast(`${type === "checkIn" ? "簽到" : "簽退"}完成`, "success");
+    showToast(`${type === "checkIn" ? "上班簽到" : "下班簽退"}完成`, "success");
     await render();
   } catch (error) {
-    showToast(`打卡失敗：${error.message}`, "danger");
+    showToast(`打卡失敗：${friendlyPunchError(error)}`, "danger");
+  } finally {
+    setPunching(false, type);
   }
 }
 
@@ -117,10 +122,9 @@ async function updateDaily(now) {
   const snap = await getDocs(query(
     collection(db, "attendance"),
     where("userId", "==", profile.id),
-    where("date", "==", date),
-    orderBy("timestamp", "asc")
+    where("date", "==", date)
   ));
-  const records = snap.docs.map((item) => item.data());
+  const records = snap.docs.map((item) => item.data()).sort(byTimestampAsc);
   const firstIn = records.find((item) => item.type === "checkIn");
   const lastOut = records.filter((item) => item.type === "checkOut").at(-1);
   if (!firstIn || !lastOut) return;
@@ -154,11 +158,9 @@ async function render() {
   const snap = await getDocs(query(
     collection(db, "attendance"),
     where("userId", "==", profile.id),
-    where("date", "==", date),
-    orderBy("timestamp", "asc"),
-    limit(20)
+    where("date", "==", date)
   ));
-  const rows = snap.docs.map((item) => item.data());
+  const rows = snap.docs.map((item) => item.data()).sort(byTimestampAsc).slice(0, 20);
   qs("#rows").innerHTML = rows.length
     ? rows.map((row) => `<tr>
       <td>${fmtDateTime(row.timestamp)}</td>
@@ -170,9 +172,68 @@ async function render() {
 
   const firstIn = rows.find((item) => item.type === "checkIn");
   const lastOut = rows.filter((item) => item.type === "checkOut").at(-1);
+  updateActionState(firstIn, lastOut);
   qs("#todaySummary").innerHTML = `
     <span class="me-3">簽到：${fmtTime(firstIn?.timestamp)}</span>
     <span>簽退：${fmtTime(lastOut?.timestamp)}</span>`;
+}
+
+function updateActionState(firstIn, lastOut) {
+  const hint = qs("#attendanceHint");
+  const checkInBtn = qs("#checkInBtn");
+  const checkOutBtn = qs("#checkOutBtn");
+
+  checkInBtn.classList.toggle("btn-success", !firstIn);
+  checkInBtn.classList.toggle("btn-outline-success", Boolean(firstIn));
+  checkOutBtn.classList.toggle("btn-warning", Boolean(firstIn && !lastOut));
+  checkOutBtn.classList.toggle("btn-outline-warning", !firstIn || Boolean(lastOut));
+
+  if (!firstIn) {
+    hint.className = "alert alert-info py-2 mb-3";
+    hint.textContent = "今日尚未簽到。請先按「上班簽到」。";
+    return;
+  }
+  if (!lastOut) {
+    hint.className = "alert alert-success py-2 mb-3";
+    hint.textContent = `今日已於 ${fmtTime(firstIn.timestamp)} 簽到。下班時請按「下班簽退」。`;
+    return;
+  }
+  hint.className = "alert alert-secondary py-2 mb-3";
+  hint.textContent = `今日已完成：簽到 ${fmtTime(firstIn.timestamp)}，簽退 ${fmtTime(lastOut.timestamp)}。`;
+}
+
+function setPunching(isPunching, type) {
+  const checkInBtn = qs("#checkInBtn");
+  const checkOutBtn = qs("#checkOutBtn");
+  checkInBtn.disabled = isPunching;
+  checkOutBtn.disabled = isPunching;
+  if (isPunching) {
+    const label = type === "checkIn" ? "正在取得定位並簽到..." : "正在取得定位並簽退...";
+    (type === "checkIn" ? checkInBtn : checkOutBtn).textContent = label;
+    return;
+  }
+  checkInBtn.textContent = "上班簽到";
+  checkOutBtn.textContent = "下班簽退";
+}
+
+function friendlyPunchError(error) {
+  if (error?.code === 1 || /denied geolocation/i.test(error?.message || "")) {
+    return "定位權限被拒絕。請點網址列左側圖示，允許位置權限後再試一次。";
+  }
+  if (error?.code === 2) return "目前無法取得定位，請確認定位服務已開啟。";
+  if (error?.code === 3) return "取得定位逾時，請稍後再試。";
+  return error?.message || "未知錯誤";
+}
+
+function byTimestampAsc(a, b) {
+  return toMillis(a.timestamp) - toMillis(b.timestamp);
+}
+
+function toMillis(value) {
+  if (!value) return 0;
+  if (value.toMillis) return value.toMillis();
+  if (value.toDate) return value.toDate().getTime();
+  return new Date(value).getTime();
 }
 
 qs("#checkInBtn").addEventListener("click", () => punch("checkIn"));

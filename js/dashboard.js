@@ -1,8 +1,6 @@
 import {
   collection,
   getDocs,
-  limit,
-  orderBy,
   query,
   where
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
@@ -53,15 +51,18 @@ qs("#compHours").textContent = profile.compensatoryLeaveHours ?? 0;
 const [leaveSnap, overtimeSnap, attendanceSnap] = await Promise.all([
   getDocs(query(collection(db, "leaveRequests"), where("userId", "==", profile.id), where("status", "==", "pending"))),
   getDocs(query(collection(db, "overtimeRequests"), where("userId", "==", profile.id), where("status", "==", "pending"))),
-  getDocs(query(collection(db, "attendance"), where("userId", "==", profile.id), orderBy("timestamp", "desc"), limit(6)))
+  getDocs(query(collection(db, "attendance"), where("userId", "==", profile.id)))
 ]);
 
 qs("#leavePending").textContent = leaveSnap.size;
 qs("#overtimePending").textContent = overtimeSnap.size;
 qs("#attendanceRows").innerHTML = attendanceSnap.empty
   ? `<tr><td colspan="4" class="muted">尚無打卡紀錄</td></tr>`
-  : attendanceSnap.docs.map((docSnap) => {
-    const row = docSnap.data();
+  : attendanceSnap.docs
+  .map((docSnap) => docSnap.data())
+  .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp))
+  .slice(0, 6)
+  .map((row) => {
     return `<tr>
       <td>${fmtDateTime(row.timestamp)}</td>
       <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
@@ -69,3 +70,10 @@ qs("#attendanceRows").innerHTML = attendanceSnap.empty
       <td>${row.latitude?.toFixed?.(5) || "-"}, ${row.longitude?.toFixed?.(5) || "-"}</td>
     </tr>`;
   }).join("");
+
+function toMillis(value) {
+  if (!value) return 0;
+  if (value.toMillis) return value.toMillis();
+  if (value.toDate) return value.toDate().getTime();
+  return new Date(value).getTime();
+}

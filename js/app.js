@@ -177,6 +177,9 @@ export function pathToRoot() {
 export function renderShellProfile(profile) {
   qsa("[data-user-name]").forEach((el) => { el.textContent = profile.name || profile.email; });
   qsa("[data-user-role]").forEach((el) => { el.textContent = roleLabels[profile.role] || profile.role; });
+  qsa("[data-admin-nav]").forEach((el) => {
+    if (profile.role === "employee") el.remove();
+  });
   const current = location.pathname.split("/").pop() || "index.html";
   qsa("[data-nav]").forEach((link) => {
     if (link.getAttribute("href")?.endsWith(current)) link.classList.add("active");
@@ -286,13 +289,13 @@ export function pageChrome(title, subtitle = "") {
         <a data-nav class="nav-link" href="${root}overtime.html">加班申請</a>
         <a data-nav class="nav-link" href="${root}calendar.html">休假行事曆</a>
         <a data-nav class="nav-link" href="${root}profile.html">個人資料</a>
-        <hr class="border-secondary">
-        <a data-nav class="nav-link" href="${root}admin/index.html">管理首頁</a>
-        <a data-nav class="nav-link" href="${root}admin/employees.html">員工管理</a>
-        <a data-nav class="nav-link" href="${root}admin/attendance.html">出勤報表</a>
-        <a data-nav class="nav-link" href="${root}admin/leave.html">請假審核</a>
-        <a data-nav class="nav-link" href="${root}admin/overtime.html">加班審核</a>
-        <a data-nav class="nav-link" href="${root}admin/settings.html">系統設定</a>
+        <hr data-admin-nav class="border-secondary">
+        <a data-nav data-admin-nav class="nav-link" href="${root}admin/index.html">管理首頁</a>
+        <a data-nav data-admin-nav class="nav-link" href="${root}admin/employees.html">員工管理</a>
+        <a data-nav data-admin-nav class="nav-link" href="${root}admin/attendance.html">出勤報表</a>
+        <a data-nav data-admin-nav class="nav-link" href="${root}admin/leave.html">請假審核</a>
+        <a data-nav data-admin-nav class="nav-link" href="${root}admin/overtime.html">加班審核</a>
+        <a data-nav data-admin-nav class="nav-link" href="${root}admin/settings.html">系統設定</a>
       </nav>
     </aside>
     <main class="content">

@@ -91,7 +91,8 @@ const lateRecords = attendanceSnap.docs
     const date = item.timestamp?.toDate ? item.timestamp.toDate() : new Date(item.timestamp);
     return date >= monthStart && date <= monthEnd;
   })
-  .map((item) => ({ ...item, lateMinutes: calculateLateMinutes(item) }));
+  .map((item) => ({ ...item, lateMinutes: calculateAdjustedLateMinutes(item, events) }))
+  .filter((item) => item.lateMinutes > 0);
 renderLateRankings(lateRecords);
 
 function isEventOnDate(item, date) {
@@ -141,9 +142,27 @@ function rankingTable(rows, type) {
   return `<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function calculateLateMinutes(record) {
+function calculateAdjustedLateMinutes(record, leaveEvents) {
   const actual = record.timestamp?.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
   const expected = timeToDate(record.date || todayKey(actual), record.workStart || "09:00");
   const diff = Math.ceil((actual.getTime() - expected.getTime()) / 60000);
-  return Math.max(0, diff);
+  const rawLateMinutes = Math.max(0, diff);
+  if (!rawLateMinutes) return 0;
+
+  const coveredLeaveMinutes = leaveEvents
+    .filter((item) => item.userId === record.userId)
+    .reduce((sum, item) => sum + overlapMinutes(expected, actual, toDate(item.startTime), toDate(item.endTime)), 0);
+
+  return Math.max(0, rawLateMinutes - coveredLeaveMinutes);
+}
+
+function overlapMinutes(start, end, blockStart, blockEnd) {
+  const from = Math.max(start.getTime(), blockStart.getTime());
+  const to = Math.min(end.getTime(), blockEnd.getTime());
+  return Math.max(0, Math.ceil((to - from) / 60000));
+}
+
+function toDate(value) {
+  if (!value) return new Date("");
+  return value.toDate ? value.toDate() : new Date(value);
 }

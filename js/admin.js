@@ -143,9 +143,10 @@ function buildDepartmentOptions(users) {
 }
 
 async function renderAttendanceReport() {
-  const [usersSnap, attendanceSnap, settings] = await Promise.all([
+  const [usersSnap, attendanceSnap, leaveSnap, settings] = await Promise.all([
     getDocs(collection(db, "users")),
     getDocs(collection(db, "attendance")),
+    getDocs(collection(db, "leaveRequests")),
     getWorkSettings()
   ]);
   const users = usersSnap.docs
@@ -156,6 +157,10 @@ async function renderAttendanceReport() {
   const allAttendanceRows = attendanceSnap.docs
     .map((item) => item.data())
     .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
+  const allLeaveRows = leaveSnap.docs
+    .map((item) => item.data())
+    .sort((a, b) => toMillis(b.startTime) - toMillis(a.startTime));
+  const approvedLeaveRows = allLeaveRows.filter((item) => item.status === "approved");
   const now = new Date();
   const today = todayKey(now);
   const years = buildAttendanceYears(allAttendanceRows, now.getFullYear());
@@ -218,6 +223,19 @@ async function renderAttendanceReport() {
         <tbody id="attendanceSummaryRows"><tr><td colspan="10" class="muted">請先選擇員工</td></tr></tbody>
       </table></div>
     </div>
+    <div class="panel p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h2 class="h5 mb-1">當月請假紀錄</h2>
+          <div class="small muted" id="attendanceLeavePeriodLabel">請選擇員工</div>
+        </div>
+        <span class="badge text-bg-secondary" id="attendanceLeaveBadge">尚未選擇員工</span>
+      </div>
+      <div class="table-responsive"><table class="table align-middle mb-0">
+        <thead><tr><th>假別</th><th>時間</th><th>時數</th><th>狀態</th><th>原因</th></tr></thead>
+        <tbody id="attendanceLeaveRows"><tr><td colspan="5" class="muted">請先選擇員工</td></tr></tbody>
+      </table></div>
+    </div>
     <details class="panel p-3">
       <summary class="d-flex justify-content-between align-items-center">
         <span class="h5 mb-0">原始打卡明細（查核用）</span>
@@ -231,12 +249,12 @@ async function renderAttendanceReport() {
 
   const renderCurrentSelection = () => {
     const userId = qs("#attendanceUserFilter").value;
-    renderSelectedAttendance(userId, usersById, allAttendanceRows, settings, selectedAttendancePeriod());
+    renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeaveRows, approvedLeaveRows, settings, selectedAttendancePeriod());
   };
 
   qs("#attendanceDepartmentFilter").addEventListener("change", (event) => {
     renderAttendanceUserOptions(event.target.value, users);
-    renderSelectedAttendance("", usersById, allAttendanceRows, settings, selectedAttendancePeriod());
+    renderSelectedAttendance("", usersById, allAttendanceRows, allLeaveRows, approvedLeaveRows, settings, selectedAttendancePeriod());
   });
   qs("#attendanceUserFilter").addEventListener("change", renderCurrentSelection);
   qs("#attendanceYearFilter").addEventListener("change", renderCurrentSelection);
@@ -320,9 +338,12 @@ function renderAttendanceUserOptions(department, users) {
   `;
 }
 
-function renderSelectedAttendance(userId, usersById, allAttendanceRows, settings, period) {
+function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeaveRows, approvedLeaveRows, settings, period) {
   const summaryBody = qs("#attendanceSummaryRows");
   const summaryBadge = qs("#attendanceSummaryBadge");
+  const leaveBody = qs("#attendanceLeaveRows");
+  const leaveBadge = qs("#attendanceLeaveBadge");
+  const leavePeriodLabel = qs("#attendanceLeavePeriodLabel");
   const detailBody = qs("#attendanceDetailRows");
   const detailBadge = qs("#attendanceDetailBadge");
   const periodLabel = qs("#attendancePeriodLabel");
@@ -332,25 +353,34 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, settings
   if (!userId) {
     summaryBadge.className = "badge text-bg-secondary";
     summaryBadge.textContent = "尚未選擇員工";
+    leaveBadge.className = "badge text-bg-secondary";
+    leaveBadge.textContent = "尚未選擇員工";
     detailBadge.className = "badge text-bg-secondary";
     detailBadge.textContent = "尚未選擇員工";
     periodLabel.textContent = `${period.year} 年 ${period.month} 月`;
+    leavePeriodLabel.textContent = `${period.year} 年 ${period.month} 月`;
     statsHost.innerHTML = monthlyStatsHtml(null);
     exportButton.disabled = true;
     exportButton.onclick = null;
     summaryBody.innerHTML = `<tr><td colspan="10" class="muted">請先選擇員工</td></tr>`;
+    leaveBody.innerHTML = `<tr><td colspan="5" class="muted">請先選擇員工</td></tr>`;
     detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
     return;
   }
 
   const user = usersById[userId] || {};
   const attendanceRows = allAttendanceRows.filter((row) => row.userId === userId && isRowInPeriod(row, period));
-  const summaryRows = buildAttendanceSummaryRows(attendanceRows, user, settings);
+  const leaveRows = allLeaveRows.filter((row) => row.userId === userId && isLeaveInPeriod(row, period));
+  const userApprovedLeaves = approvedLeaveRows.filter((row) => row.userId === userId);
+  const summaryRows = buildAttendanceSummaryRows(attendanceRows, user, settings, userApprovedLeaves);
   const monthlyStats = buildMonthlyAttendanceStats(summaryRows);
 
   periodLabel.textContent = `${period.year} 年 ${period.month} 月 - ${user.name || user.email || "已選員工"}`;
+  leavePeriodLabel.textContent = `${period.year} 年 ${period.month} 月 - ${user.name || user.email || "已選員工"}`;
   summaryBadge.className = "badge text-bg-primary";
   summaryBadge.textContent = `${user.name || user.email || "已選員工"}，${summaryRows.length} 天`;
+  leaveBadge.className = leaveRows.length ? "badge text-bg-primary" : "badge text-bg-secondary";
+  leaveBadge.textContent = `${leaveRows.length} 筆`;
   detailBadge.className = "badge text-bg-primary";
   detailBadge.textContent = `${user.name || user.email || "已選員工"}，${attendanceRows.length} 筆`;
   statsHost.innerHTML = monthlyStatsHtml(monthlyStats);
@@ -371,6 +401,16 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, settings
       <td>${summaryStatusBadge(row)}</td>
     </tr>`;
   }).join("") : `<tr><td colspan="10" class="muted">此員工尚無出勤資料</td></tr>`;
+
+  leaveBody.innerHTML = leaveRows.length ? leaveRows.map((row) => {
+    return `<tr>
+      <td>${leaveTypeLabel(row.leaveType)}</td>
+      <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
+      <td>${row.hours ?? "-"}</td>
+      <td>${badge(row.status)}</td>
+      <td>${row.reason || "-"}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="5" class="muted">此員工本月尚無請假紀錄</td></tr>`;
 
   detailBody.innerHTML = attendanceRows.length ? attendanceRows.map((row) => {
     return `<tr>
@@ -406,6 +446,14 @@ function isRowInPeriod(row, period) {
   const date = row.date || dateKeyFromTimestamp(row.timestamp);
   if (!date) return false;
   return date.slice(0, 7) === `${period.year}-${String(period.month).padStart(2, "0")}`;
+}
+
+function isLeaveInPeriod(row, period) {
+  const monthStart = new Date(period.year, period.month - 1, 1);
+  const monthEnd = new Date(period.year, period.month, 0, 23, 59, 59);
+  const start = timestampToDate(row.startTime);
+  const end = timestampToDate(row.endTime);
+  return start <= monthEnd && end >= monthStart;
 }
 
 function buildMonthlyAttendanceStats(summaryRows) {
@@ -473,7 +521,7 @@ function summaryStatusText(status) {
   return labels[status] || status || "-";
 }
 
-function buildAttendanceSummaryRows(attendanceRows, user, settings) {
+function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeaves = []) {
   const groups = new Map();
   attendanceRows.forEach((row) => {
     const date = row.date || dateKeyFromTimestamp(row.timestamp);
@@ -494,10 +542,12 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings) {
       const shift = resolveReportShift(source, user, settings);
       const checkInDate = firstIn ? timestampToDate(firstIn.timestamp) : null;
       const checkOutDate = lastOut ? timestampToDate(lastOut.timestamp) : null;
+      const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
       const workHours = calculateReportWorkHours(date, checkInDate, checkOutDate, settings);
-      const lateMinutes = checkInDate ? minutesAfter(checkInDate, timeToDate(date, shift.workStart || settings.workStart || "09:00")) : 0;
-      const earlyLeaveMinutes = checkOutDate ? minutesAfter(timeToDate(date, shift.workEnd || settings.workEnd || "18:00"), checkOutDate) : 0;
-      const status = resolveReportStatus(firstIn, lastOut, workHours, lateMinutes, earlyLeaveMinutes, settings);
+      const creditedLeaveHours = calculateReportApprovedLeaveWorkHours(date, dayLeaves, shift, settings);
+      const lateMinutes = checkInDate ? calculateAdjustedLateMinutes(date, checkInDate, shift, settings, dayLeaves) : 0;
+      const earlyLeaveMinutes = checkOutDate ? calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, dayLeaves) : 0;
+      const status = resolveReportStatus(firstIn, lastOut, workHours + creditedLeaveHours, lateMinutes, earlyLeaveMinutes, settings);
 
       return {
         date,
@@ -507,6 +557,7 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings) {
         checkInText: checkInDate ? fmtTime(checkInDate) : "-",
         checkOutText: checkOutDate ? fmtTime(checkOutDate) : "-",
         workHours,
+        creditedLeaveHours,
         lateMinutes,
         earlyLeaveMinutes,
         status
@@ -535,11 +586,59 @@ function calculateReportWorkHours(date, checkInDate, checkOutDate, settings) {
   return Number(Math.max(0, hoursBetween(checkInDate, checkOutDate) - lunchOverlap).toFixed(2));
 }
 
-function resolveReportStatus(firstIn, lastOut, workHours, lateMinutes, earlyLeaveMinutes, settings) {
+function calculateAdjustedLateMinutes(date, checkInDate, shift, settings, approvedLeaves) {
+  const expected = timeToDate(date, shift.workStart || settings.workStart || "09:00");
+  const rawLateMinutes = minutesAfter(checkInDate, expected) - Number(settings.lateGraceMinutes || 0);
+  if (rawLateMinutes <= 0) return 0;
+  return Math.max(0, rawLateMinutes - leaveOverlapMinutes(expected, checkInDate, approvedLeaves));
+}
+
+function calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, approvedLeaves) {
+  const expected = timeToDate(date, shift.workEnd || "18:00");
+  const rawEarlyLeaveMinutes = minutesAfter(expected, checkOutDate);
+  if (rawEarlyLeaveMinutes <= 0) return 0;
+  return Math.max(0, rawEarlyLeaveMinutes - leaveOverlapMinutes(checkOutDate, expected, approvedLeaves));
+}
+
+function calculateReportApprovedLeaveWorkHours(date, approvedLeaves, shift, settings) {
+  const workStart = timeToDate(date, shift.workStart || settings.workStart || "09:00");
+  const workEnd = timeToDate(date, shift.workEnd || settings.workEnd || "18:00");
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const minutes = approvedLeaves.reduce((sum, item) => {
+    const leaveStart = timestampToDate(item.startTime);
+    const leaveEnd = timestampToDate(item.endTime);
+    const workMinutes = overlapMinutes(workStart, workEnd, leaveStart, leaveEnd);
+    const lunchMinutes = overlapMinutes(lunchStart, lunchEnd, leaveStart, leaveEnd);
+    return sum + Math.max(0, workMinutes - lunchMinutes);
+  }, 0);
+  return minutes / 60;
+}
+
+function leaveOverlapMinutes(start, end, approvedLeaves) {
+  if (!start || !end || end <= start) return 0;
+  return approvedLeaves.reduce((sum, item) => {
+    return sum + overlapMinutes(start, end, timestampToDate(item.startTime), timestampToDate(item.endTime));
+  }, 0);
+}
+
+function overlapMinutes(start, end, blockStart, blockEnd) {
+  const from = Math.max(start.getTime(), blockStart.getTime());
+  const to = Math.min(end.getTime(), blockEnd.getTime());
+  return Math.max(0, Math.ceil((to - from) / 60000));
+}
+
+function isLeaveOnDate(item, date) {
+  const dayStart = new Date(`${date}T00:00:00`);
+  const dayEnd = new Date(`${date}T23:59:59`);
+  return timestampToDate(item.startTime) <= dayEnd && timestampToDate(item.endTime) >= dayStart;
+}
+
+function resolveReportStatus(firstIn, lastOut, creditedHours, lateMinutes, earlyLeaveMinutes, settings) {
   if (!firstIn || !lastOut) return "incomplete";
   if (lateMinutes > 0) return "late";
   if (earlyLeaveMinutes > 0) return "earlyLeave";
-  if (workHours < Number(settings.standardHours || 8)) return "workTimeNotEnough";
+  if (creditedHours < Number(settings.standardHours || 8)) return "workTimeNotEnough";
   return "normal";
 }
 

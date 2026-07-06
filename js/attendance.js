@@ -84,16 +84,19 @@ async function getPosition() {
   });
 }
 
-function resolveStatus(type, at) {
+function resolveStatus(type, at, approvedLeaves = [], shiftOverride = null) {
   const dateKey = todayKey(at);
-  const shift = getAssignedShift();
+  const shift = shiftOverride || getAssignedShift();
   if (type === "checkIn") {
     const start = timeToDate(dateKey, shift.workStart);
-    start.setMinutes(start.getMinutes() + Number(settings.lateGraceMinutes || 0));
-    return at > start ? "late" : "normal";
+    const coveredMinutes = leaveOverlapMinutes(start, at, approvedLeaves);
+    const lateMinutes = Math.ceil((at.getTime() - start.getTime()) / 60000) - coveredMinutes - Number(settings.lateGraceMinutes || 0);
+    return lateMinutes > 0 ? "late" : "normal";
   }
   const end = timeToDate(dateKey, shift.workEnd);
-  return at < end ? "earlyLeave" : "normal";
+  const coveredMinutes = leaveOverlapMinutes(at, end, approvedLeaves);
+  const earlyMinutes = Math.ceil((end.getTime() - at.getTime()) / 60000) - coveredMinutes;
+  return earlyMinutes > 0 ? "earlyLeave" : "normal";
 }
 
 async function punch(type) {
@@ -102,7 +105,8 @@ async function punch(type) {
     const at = new Date();
     const pos = await getPosition();
     const shift = getAssignedShift();
-    const status = resolveStatus(type, at);
+    const approvedLeaves = await loadApprovedLeavesForDate(todayKey(at));
+    const status = resolveStatus(type, at, approvedLeaves);
     const record = {
       userId: profile.id,
       userName: profile.name,
@@ -133,6 +137,7 @@ async function punch(type) {
 
 async function updateDaily(now) {
   const date = todayKey(now);
+  const approvedLeaves = await loadApprovedLeavesForDate(date);
   const snap = await getDocs(query(
     collection(db, "attendance"),
     where("userId", "==", profile.id),
@@ -149,13 +154,18 @@ async function updateDaily(now) {
     workEnd: firstIn.workEnd || settings.workEnd
   };
 
-  const lunchHours = hoursBetween(timeToDate(date, settings.lunchStart), timeToDate(date, settings.lunchEnd));
-  const total = Math.max(0, hoursBetween(firstIn.timestamp.toDate ? firstIn.timestamp.toDate() : firstIn.timestamp, lastOut.timestamp.toDate ? lastOut.timestamp.toDate() : lastOut.timestamp) - lunchHours);
-  const reached = total >= Number(settings.standardHours || 8);
-  const dailyStatus = lastOut.status === "earlyLeave"
+  const checkInTime = toDate(firstIn.timestamp);
+  const checkOutTime = toDate(lastOut.timestamp);
+  const lunchHours = overlapHours(checkInTime, checkOutTime, timeToDate(date, settings.lunchStart), timeToDate(date, settings.lunchEnd));
+  const total = Math.max(0, hoursBetween(checkInTime, checkOutTime) - lunchHours);
+  const creditedLeaveHours = calculateApprovedLeaveWorkHours(date, approvedLeaves, shift);
+  const reached = total + creditedLeaveHours >= Number(settings.standardHours || 8);
+  const firstInStatus = resolveStatus("checkIn", checkInTime, approvedLeaves, shift);
+  const lastOutStatus = resolveStatus("checkOut", checkOutTime, approvedLeaves, shift);
+  const dailyStatus = lastOutStatus === "earlyLeave"
     ? "earlyLeave"
     : reached
-      ? (firstIn.status === "late" ? "late" : "normal")
+      ? (firstInStatus === "late" ? "late" : "normal")
       : "workTimeNotEnough";
 
   await setDoc(doc(db, "attendanceDaily", `${date}_${profile.id}`), {
@@ -170,6 +180,7 @@ async function updateDaily(now) {
     checkInTime: firstIn.timestamp,
     checkOutTime: lastOut.timestamp,
     totalWorkHours: Number(total.toFixed(2)),
+    creditedLeaveHours: Number(creditedLeaveHours.toFixed(2)),
     lunchDeductHours: Number(lunchHours.toFixed(2)),
     status: dailyStatus,
     isEightHoursReached: reached,
@@ -179,28 +190,90 @@ async function updateDaily(now) {
 
 async function render() {
   const date = todayKey();
+  const approvedLeaves = await loadApprovedLeavesForDate(date);
   const snap = await getDocs(query(
     collection(db, "attendance"),
     where("userId", "==", profile.id),
     where("date", "==", date)
   ));
   const rows = snap.docs.map((item) => item.data()).sort(byTimestampAsc).slice(0, 20);
+  const firstIn = rows.find((item) => item.type === "checkIn");
+  const lastOut = rows.filter((item) => item.type === "checkOut").at(-1);
   qs("#rows").innerHTML = rows.length
     ? rows.map((row) => `<tr>
       <td>${fmtDateTime(row.timestamp)}</td>
       <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
-      <td>${badge(row.status)}</td>
+      <td>${badge(resolveDisplayStatus(row, approvedLeaves, firstIn, lastOut))}</td>
       <td>${mapLink(row.latitude, row.longitude)}</td>
     </tr>`).join("")
     : `<tr><td colspan="4" class="muted">今日尚無紀錄</td></tr>`;
 
-  const firstIn = rows.find((item) => item.type === "checkIn");
-  const lastOut = rows.filter((item) => item.type === "checkOut").at(-1);
   updateActionState(firstIn, lastOut);
   updateShiftSummary(firstIn);
   qs("#todaySummary").innerHTML = `
     <span class="me-3">簽到：${fmtTime(firstIn?.timestamp)}</span>
     <span>簽退：${fmtTime(lastOut?.timestamp)}</span>`;
+}
+
+async function loadApprovedLeavesForDate(date) {
+  const snap = await getDocs(query(
+    collection(db, "leaveRequests"),
+    where("userId", "==", profile.id)
+  ));
+  const dayStart = new Date(`${date}T00:00:00`);
+  const dayEnd = new Date(`${date}T23:59:59`);
+  return snap.docs
+    .map((item) => item.data())
+    .filter((item) => item.status === "approved")
+    .filter((item) => toDate(item.startTime) <= dayEnd && toDate(item.endTime) >= dayStart);
+}
+
+function resolveDisplayStatus(row, approvedLeaves, firstIn, lastOut) {
+  if (row.type === "checkIn" && row !== firstIn) return "normal";
+  if (row.type === "checkOut" && row !== lastOut) return "normal";
+  const at = toDate(row.timestamp);
+  const shift = findShift(row.shiftId) || {
+    id: row.shiftId || "default",
+    name: row.shiftName || "預設班別",
+    workStart: row.workStart || settings.workStart || "09:00",
+    workEnd: row.workEnd || settings.workEnd || "18:00"
+  };
+  return resolveStatus(row.type, at, approvedLeaves, shift);
+}
+
+function calculateApprovedLeaveWorkHours(date, approvedLeaves, shift) {
+  const workStart = timeToDate(date, shift.workStart);
+  const workEnd = timeToDate(date, shift.workEnd);
+  const lunchStart = timeToDate(date, settings.lunchStart);
+  const lunchEnd = timeToDate(date, settings.lunchEnd);
+  const minutes = approvedLeaves.reduce((sum, item) => {
+    const leaveStart = toDate(item.startTime);
+    const leaveEnd = toDate(item.endTime);
+    const leaveWorkMinutes = overlapMinutes(workStart, workEnd, leaveStart, leaveEnd);
+    const lunchMinutes = overlapMinutes(lunchStart, lunchEnd, leaveStart, leaveEnd);
+    return sum + Math.max(0, leaveWorkMinutes - lunchMinutes);
+  }, 0);
+  return minutes / 60;
+}
+
+function leaveOverlapMinutes(start, end, approvedLeaves) {
+  if (end <= start) return 0;
+  return approvedLeaves.reduce((sum, item) => sum + overlapMinutes(start, end, toDate(item.startTime), toDate(item.endTime)), 0);
+}
+
+function overlapHours(start, end, blockStart, blockEnd) {
+  return overlapMinutes(start, end, blockStart, blockEnd) / 60;
+}
+
+function overlapMinutes(start, end, blockStart, blockEnd) {
+  const from = Math.max(start.getTime(), blockStart.getTime());
+  const to = Math.min(end.getTime(), blockEnd.getTime());
+  return Math.max(0, Math.ceil((to - from) / 60000));
+}
+
+function toDate(value) {
+  if (!value) return new Date("");
+  return value.toDate ? value.toDate() : new Date(value);
 }
 
 function normalizeWorkShifts(value) {

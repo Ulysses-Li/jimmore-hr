@@ -23,6 +23,7 @@ import {
   hoursBetween,
   showToast,
   timeToDate,
+  todayKey,
   roleLabels,
   leaveTypeLabel
 } from "./app.js";
@@ -155,30 +156,62 @@ async function renderAttendanceReport() {
   const allAttendanceRows = attendanceSnap.docs
     .map((item) => item.data())
     .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
+  const now = new Date();
+  const today = todayKey(now);
+  const years = buildAttendanceYears(allAttendanceRows, now.getFullYear());
+  const todayMissingUsers = buildTodayMissingClockInUsers(users, allAttendanceRows, settings, today);
 
   content.innerHTML = `
     <div class="panel p-3 mb-3">
       <div class="row g-3">
-        <div class="col-md-6">
+        <div class="col-md-3">
+          <label class="form-label" for="attendanceYearFilter">年度</label>
+          <select class="form-select" id="attendanceYearFilter">
+            ${years.map((year) => `<option value="${year}" ${year === now.getFullYear() ? "selected" : ""}>${year} 年</option>`).join("")}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="attendanceMonthFilter">月份</label>
+          <select class="form-select" id="attendanceMonthFilter">
+            ${Array.from({ length: 12 }, (_, index) => {
+              const month = index + 1;
+              return `<option value="${month}" ${month === now.getMonth() + 1 ? "selected" : ""}>${month} 月</option>`;
+            }).join("")}
+          </select>
+        </div>
+        <div class="col-md-3">
           <label class="form-label" for="attendanceDepartmentFilter">先選部門</label>
           <select class="form-select" id="attendanceDepartmentFilter">
             <option value="">請選擇部門</option>
             ${departments.map((department) => `<option value="${department}">${department}</option>`).join("")}
           </select>
         </div>
-        <div class="col-md-6">
+        <div class="col-md-3">
           <label class="form-label" for="attendanceUserFilter">再選人員</label>
           <select class="form-select" id="attendanceUserFilter" disabled>
             <option value="">請先選擇部門</option>
           </select>
         </div>
       </div>
-      <div class="form-text">為避免資料量過大，出勤明細與每日彙總會在選擇部門與人員後才顯示。</div>
+      <div class="form-text">人事月報以月份為單位；切換 1 到 12 月後，彙總與原始明細都只顯示該月資料。</div>
     </div>
+    ${todayMissingAttendanceHtml(todayMissingUsers, today, settings)}
     <div class="panel p-3 mb-3">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h5 mb-0">出缺勤彙總</h2>
-        <span class="badge text-bg-secondary" id="attendanceSummaryBadge">尚未選擇員工</span>
+        <div>
+          <h2 class="h5 mb-1">出缺勤月報</h2>
+          <div class="small muted" id="attendancePeriodLabel">請選擇員工</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span class="badge text-bg-secondary" id="attendanceSummaryBadge">尚未選擇員工</span>
+          <button class="btn btn-sm btn-outline-primary" id="attendanceExportCsv" disabled>下載 CSV</button>
+        </div>
+      </div>
+      <div class="row g-2 mb-3" id="attendanceMonthlyStats">
+        <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">出勤日數</div><div class="fw-bold">-</div></div></div>
+        <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">總工時</div><div class="fw-bold">-</div></div></div>
+        <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">遲到</div><div class="fw-bold">-</div></div></div>
+        <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">早退 / 異常</div><div class="fw-bold">-</div></div></div>
       </div>
       <div class="table-responsive"><table class="table align-middle mb-0">
         <thead><tr><th>日期</th><th>員工</th><th>部門</th><th>班別</th><th>簽到</th><th>簽退</th><th>工時</th><th>遲到</th><th>早退</th><th>狀態</th></tr></thead>
@@ -196,14 +229,80 @@ async function renderAttendanceReport() {
       </table></div>
     </details>`;
 
+  const renderCurrentSelection = () => {
+    const userId = qs("#attendanceUserFilter").value;
+    renderSelectedAttendance(userId, usersById, allAttendanceRows, settings, selectedAttendancePeriod());
+  };
+
   qs("#attendanceDepartmentFilter").addEventListener("change", (event) => {
     renderAttendanceUserOptions(event.target.value, users);
-    renderSelectedAttendance("", usersById, allAttendanceRows, settings);
+    renderSelectedAttendance("", usersById, allAttendanceRows, settings, selectedAttendancePeriod());
   });
-  qs("#attendanceUserFilter").addEventListener("change", (event) => {
-    const userId = event.target.value;
-    renderSelectedAttendance(userId, usersById, allAttendanceRows, settings);
-  });
+  qs("#attendanceUserFilter").addEventListener("change", renderCurrentSelection);
+  qs("#attendanceYearFilter").addEventListener("change", renderCurrentSelection);
+  qs("#attendanceMonthFilter").addEventListener("change", renderCurrentSelection);
+}
+
+function buildTodayMissingClockInUsers(users, attendanceRows, settings, today) {
+  if (isCompanyRestDay(today, settings)) return [];
+  const checkedInUserIds = new Set(
+    attendanceRows
+      .filter((row) => (row.date || dateKeyFromTimestamp(row.timestamp)) === today && row.type === "checkIn")
+      .map((row) => row.userId)
+      .filter(Boolean)
+  );
+  const shifts = normalizeWorkShifts(settings);
+  return users
+    .filter((user) => user.isActive !== false && !checkedInUserIds.has(user.id))
+    .map((user) => {
+      const shift = shifts.find((item) => item.id === user.defaultShiftId) || shifts[0] || {};
+      return { ...user, shiftName: shift.name || "未設定班別", workStart: shift.workStart || "-" };
+    })
+    .sort((a, b) => String(a.department || "").localeCompare(String(b.department || ""), "zh-Hant")
+      || String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
+}
+
+function todayMissingAttendanceHtml(users, today, settings) {
+  if (isCompanyRestDay(today, settings)) {
+    return `
+      <div class="panel p-3 mb-3">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <h2 class="h5 mb-1">今日尚未打卡人員</h2>
+            <div class="small muted">${today}</div>
+          </div>
+          <span class="badge text-bg-secondary">今日為休息日</span>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="panel p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h2 class="h5 mb-1">今日尚未打卡人員</h2>
+          <div class="small muted">${today}，供人事主管關切未簽到原因</div>
+        </div>
+        <span class="badge ${users.length ? "text-bg-warning" : "text-bg-success"}">${users.length ? `${users.length} 人` : "全員已簽到"}</span>
+      </div>
+      <div class="table-responsive"><table class="table align-middle mb-0">
+        <thead><tr><th>姓名</th><th>Email</th><th>部門</th><th>角色</th><th>班別</th><th>上班時間</th></tr></thead>
+        <tbody>${users.length ? users.map((user) => `<tr>
+          <td>${user.name || "-"}</td>
+          <td>${user.email || "-"}</td>
+          <td>${user.department || "未分部門"}</td>
+          <td>${roleLabels[user.role] || user.role || "-"}</td>
+          <td>${user.shiftName}</td>
+          <td>${user.workStart}</td>
+        </tr>`).join("") : `<tr><td colspan="6" class="muted">今天沒有尚未打卡人員</td></tr>`}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function isCompanyRestDay(dateKey, settings) {
+  const date = new Date(`${dateKey}T00:00:00`);
+  const day = date.getDay();
+  const holidayDates = new Set(Array.isArray(settings.holidayDates) ? settings.holidayDates : []);
+  return day === 0 || day === 6 || holidayDates.has(dateKey);
 }
 
 function renderAttendanceUserOptions(department, users) {
@@ -221,30 +320,42 @@ function renderAttendanceUserOptions(department, users) {
   `;
 }
 
-function renderSelectedAttendance(userId, usersById, allAttendanceRows, settings) {
+function renderSelectedAttendance(userId, usersById, allAttendanceRows, settings, period) {
   const summaryBody = qs("#attendanceSummaryRows");
   const summaryBadge = qs("#attendanceSummaryBadge");
   const detailBody = qs("#attendanceDetailRows");
   const detailBadge = qs("#attendanceDetailBadge");
+  const periodLabel = qs("#attendancePeriodLabel");
+  const statsHost = qs("#attendanceMonthlyStats");
+  const exportButton = qs("#attendanceExportCsv");
 
   if (!userId) {
     summaryBadge.className = "badge text-bg-secondary";
     summaryBadge.textContent = "尚未選擇員工";
     detailBadge.className = "badge text-bg-secondary";
     detailBadge.textContent = "尚未選擇員工";
+    periodLabel.textContent = `${period.year} 年 ${period.month} 月`;
+    statsHost.innerHTML = monthlyStatsHtml(null);
+    exportButton.disabled = true;
+    exportButton.onclick = null;
     summaryBody.innerHTML = `<tr><td colspan="10" class="muted">請先選擇員工</td></tr>`;
     detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
     return;
   }
 
   const user = usersById[userId] || {};
-  const attendanceRows = allAttendanceRows.filter((row) => row.userId === userId);
+  const attendanceRows = allAttendanceRows.filter((row) => row.userId === userId && isRowInPeriod(row, period));
   const summaryRows = buildAttendanceSummaryRows(attendanceRows, user, settings);
+  const monthlyStats = buildMonthlyAttendanceStats(summaryRows);
 
+  periodLabel.textContent = `${period.year} 年 ${period.month} 月 - ${user.name || user.email || "已選員工"}`;
   summaryBadge.className = "badge text-bg-primary";
   summaryBadge.textContent = `${user.name || user.email || "已選員工"}，${summaryRows.length} 天`;
   detailBadge.className = "badge text-bg-primary";
   detailBadge.textContent = `${user.name || user.email || "已選員工"}，${attendanceRows.length} 筆`;
+  statsHost.innerHTML = monthlyStatsHtml(monthlyStats);
+  exportButton.disabled = !summaryRows.length;
+  exportButton.onclick = () => downloadAttendanceCsv(summaryRows, user, period);
 
   summaryBody.innerHTML = summaryRows.length ? summaryRows.map((row) => {
     return `<tr>
@@ -273,6 +384,93 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, settings
       <td>${mapLink(row.latitude, row.longitude)}</td>
     </tr>`;
   }).join("") : `<tr><td colspan="8" class="muted">此員工尚無打卡明細</td></tr>`;
+}
+
+function selectedAttendancePeriod() {
+  return {
+    year: Number(qs("#attendanceYearFilter").value),
+    month: Number(qs("#attendanceMonthFilter").value)
+  };
+}
+
+function buildAttendanceYears(attendanceRows, currentYear) {
+  const years = attendanceRows
+    .map((row) => row.date || dateKeyFromTimestamp(row.timestamp))
+    .filter(Boolean)
+    .map((date) => Number(date.slice(0, 4)))
+    .filter(Boolean);
+  return Array.from(new Set([currentYear - 1, currentYear, currentYear + 1, ...years])).sort((a, b) => b - a);
+}
+
+function isRowInPeriod(row, period) {
+  const date = row.date || dateKeyFromTimestamp(row.timestamp);
+  if (!date) return false;
+  return date.slice(0, 7) === `${period.year}-${String(period.month).padStart(2, "0")}`;
+}
+
+function buildMonthlyAttendanceStats(summaryRows) {
+  return {
+    days: summaryRows.length,
+    workHours: Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2)),
+    lateCount: summaryRows.filter((row) => row.lateMinutes > 0).length,
+    lateMinutes: summaryRows.reduce((sum, row) => sum + Number(row.lateMinutes || 0), 0),
+    earlyLeaveCount: summaryRows.filter((row) => row.earlyLeaveMinutes > 0).length,
+    earlyLeaveMinutes: summaryRows.reduce((sum, row) => sum + Number(row.earlyLeaveMinutes || 0), 0),
+    abnormalCount: summaryRows.filter((row) => row.status !== "normal").length
+  };
+}
+
+function monthlyStatsHtml(stats) {
+  if (!stats) {
+    return `
+      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">出勤日數</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">總工時</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">遲到</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">早退 / 異常</div><div class="fw-bold">-</div></div></div>`;
+  }
+  return `
+    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">出勤日數</div><div class="fw-bold">${stats.days} 天</div></div></div>
+    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">總工時</div><div class="fw-bold">${stats.workHours} 小時</div></div></div>
+    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">遲到</div><div class="fw-bold">${stats.lateCount} 次 / ${stats.lateMinutes} 分</div></div></div>
+    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">早退 / 異常</div><div class="fw-bold">${stats.earlyLeaveCount} 次 / ${stats.abnormalCount} 天</div></div></div>`;
+}
+
+function downloadAttendanceCsv(summaryRows, user, period) {
+  const headers = ["日期", "員工", "部門", "班別", "簽到", "簽退", "工時", "遲到分鐘", "早退分鐘", "狀態"];
+  const rows = summaryRows.map((row) => [
+    row.date,
+    row.userName,
+    row.department,
+    row.shiftName,
+    row.checkInText,
+    row.checkOutText,
+    row.workHours,
+    row.lateMinutes || 0,
+    row.earlyLeaveMinutes || 0,
+    summaryStatusText(row.status)
+  ]);
+  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${period.year}-${String(period.month).padStart(2, "0")}_${user.name || user.email || "attendance"}_出缺勤月報.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function csvCell(value) {
+  return `"${String(value ?? "").replaceAll("\"", "\"\"")}"`;
+}
+
+function summaryStatusText(status) {
+  const labels = {
+    normal: "正常",
+    late: "遲到",
+    earlyLeave: "早退",
+    workTimeNotEnough: "工時不足",
+    incomplete: "資料不完整"
+  };
+  return labels[status] || status || "-";
 }
 
 function buildAttendanceSummaryRows(attendanceRows, user, settings) {

@@ -23,14 +23,43 @@ body {
 }
 
 .brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: 0;
   display: inline-grid;
   place-items: center;
-  background: var(--jm-primary);
+  background: transparent;
+  overflow: hidden;
+  flex: 0 0 40px;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.nav-toggle {
+  display: none;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .08);
   color: #fff;
-  font-weight: 700;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0;
+}
+
+.nav-toggle span {
+  width: 18px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
 }
 
 .sidebar {
@@ -215,17 +244,59 @@ body {
   .sidebar {
     width: 100%;
     min-height: auto;
-    position: static;
+    position: sticky;
+    top: 0;
+    z-index: 1020;
+    padding: 12px 14px !important;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, .18);
+  }
+
+  .sidebar-head {
+    justify-content: space-between;
+    margin-bottom: 10px !important;
+  }
+
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+  }
+
+  .nav-toggle {
+    display: inline-flex;
+    flex: 0 0 38px;
   }
 
   .sidebar .nav {
-    flex-direction: row !important;
-    overflow-x: auto;
-    padding-bottom: 8px;
+    display: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex-direction: initial !important;
+    gap: 6px !important;
+    overflow: visible;
+    padding-top: 8px;
+    padding-bottom: 2px;
+  }
+
+  .sidebar.nav-open .nav {
+    display: grid;
+  }
+
+  .sidebar .nav hr {
+    display: none;
   }
 
   .sidebar .nav-link {
+    min-width: 0;
     white-space: nowrap;
+    text-align: center;
+    border-radius: 8px;
+    padding: .55rem .65rem;
+    background: rgba(255, 255, 255, .06);
+    font-size: .92rem;
+  }
+
+  .sidebar .nav-link.active {
+    background: rgba(255, 255, 255, .18);
   }
 
   .page-wrap {

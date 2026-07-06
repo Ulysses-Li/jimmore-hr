@@ -190,6 +190,23 @@ export function bindLogout() {
       location.href = pathToRoot() + "login.html";
     });
   });
+
+  qsa("[data-nav-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const sidebar = button.closest(".sidebar");
+      const isOpen = sidebar?.classList.toggle("nav-open") || false;
+      button.setAttribute("aria-expanded", String(isOpen));
+    });
+  });
+
+  qsa(".sidebar [data-nav]").forEach((link) => {
+    link.addEventListener("click", () => {
+      const sidebar = link.closest(".sidebar");
+      const toggle = sidebar?.querySelector("[data-nav-toggle]");
+      sidebar?.classList.remove("nav-open");
+      toggle?.setAttribute("aria-expanded", "false");
+    });
+  });
 }
 
 export async function getWorkSettings() {
@@ -246,12 +263,21 @@ export function pageChrome(title, subtitle = "") {
   const root = pathToRoot();
   return `
     <aside class="sidebar p-3">
-      <div class="d-flex align-items-center gap-2 mb-4">
-        <span class="brand-mark">J</span>
-        <div>
-          <div class="fw-bold">Jimmore HR</div>
-          <div class="small text-white-50">人事出勤管理</div>
+      <div class="sidebar-head d-flex align-items-center gap-2 mb-4">
+        <div class="d-flex align-items-center gap-2 min-w-0">
+          <span class="brand-mark">
+            <img src="${root}Jimmore_logo.ico" alt="Jimmore">
+          </span>
+          <div class="min-w-0">
+            <div class="fw-bold text-truncate">Jimmore HR</div>
+            <div class="small text-white-50 text-truncate">人事出勤管理</div>
+          </div>
         </div>
+        <button class="nav-toggle" type="button" data-nav-toggle aria-label="開啟選單" aria-expanded="false">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
       </div>
       <nav class="nav flex-column gap-1">
         <a data-nav class="nav-link" href="${root}dashboard.html">儀表板</a>

@@ -1,4 +1,5 @@
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
@@ -219,8 +220,8 @@ async function renderAttendanceReport() {
         <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">早退 / 異常</div><div class="fw-bold">-</div></div></div>
       </div>
       <div class="table-responsive"><table class="table align-middle mb-0">
-        <thead><tr><th>日期</th><th>員工</th><th>部門</th><th>班別</th><th>簽到</th><th>簽退</th><th>工時</th><th>遲到</th><th>早退</th><th>狀態</th></tr></thead>
-        <tbody id="attendanceSummaryRows"><tr><td colspan="10" class="muted">請先選擇員工</td></tr></tbody>
+        <thead><tr><th>日期</th><th>員工</th><th>部門</th><th>班別</th><th>簽到</th><th>簽退</th><th>工時</th><th>遲到</th><th>早退</th><th>狀態</th><th>處理</th></tr></thead>
+        <tbody id="attendanceSummaryRows"><tr><td colspan="11" class="muted">請先選擇員工</td></tr></tbody>
       </table></div>
     </div>
     <div class="panel p-3 mb-3">
@@ -362,7 +363,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
     statsHost.innerHTML = monthlyStatsHtml(null);
     exportButton.disabled = true;
     exportButton.onclick = null;
-    summaryBody.innerHTML = `<tr><td colspan="10" class="muted">請先選擇員工</td></tr>`;
+    summaryBody.innerHTML = `<tr><td colspan="11" class="muted">請先選擇員工</td></tr>`;
     leaveBody.innerHTML = `<tr><td colspan="5" class="muted">請先選擇員工</td></tr>`;
     detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
     return;
@@ -372,7 +373,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
   const attendanceRows = allAttendanceRows.filter((row) => row.userId === userId && isRowInPeriod(row, period));
   const leaveRows = allLeaveRows.filter((row) => row.userId === userId && isLeaveInPeriod(row, period));
   const userApprovedLeaves = approvedLeaveRows.filter((row) => row.userId === userId);
-  const summaryRows = buildAttendanceSummaryRows(attendanceRows, user, settings, userApprovedLeaves);
+  const summaryRows = buildAttendanceSummaryRows(attendanceRows, user, settings, userApprovedLeaves, period);
   const monthlyStats = buildMonthlyAttendanceStats(summaryRows);
 
   periodLabel.textContent = `${period.year} 年 ${period.month} 月 - ${user.name || user.email || "已選員工"}`;
@@ -399,8 +400,15 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
       <td>${row.lateMinutes ? `${row.lateMinutes} 分` : "-"}</td>
       <td>${row.earlyLeaveMinutes ? `${row.earlyLeaveMinutes} 分` : "-"}</td>
       <td>${summaryStatusBadge(row)}</td>
+      <td>${manualPunchActionHtml(row)}</td>
     </tr>`;
-  }).join("") : `<tr><td colspan="10" class="muted">此員工尚無出勤資料</td></tr>`;
+  }).join("") : `<tr><td colspan="11" class="muted">此員工尚無出勤資料</td></tr>`;
+
+  summaryBody.querySelectorAll("[data-manual-punch]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await createManualAttendanceRecord(button.dataset, usersById, settings);
+    });
+  });
 
   leaveBody.innerHTML = leaveRows.length ? leaveRows.map((row) => {
     return `<tr>
@@ -516,12 +524,13 @@ function summaryStatusText(status) {
     late: "遲到",
     earlyLeave: "早退",
     workTimeNotEnough: "工時不足",
+    missing: "未打卡",
     incomplete: "資料不完整"
   };
   return labels[status] || status || "-";
 }
 
-function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeaves = []) {
+function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeaves = [], period = null) {
   const groups = new Map();
   attendanceRows.forEach((row) => {
     const date = row.date || dateKeyFromTimestamp(row.timestamp);
@@ -529,6 +538,12 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
     if (!groups.has(date)) groups.set(date, []);
     groups.get(date).push(row);
   });
+
+  if (period) {
+    expectedWorkDates(period, settings).forEach((date) => {
+      if (!groups.has(date)) groups.set(date, []);
+    });
+  }
 
   return Array.from(groups.entries())
     .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
@@ -551,11 +566,17 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
 
       return {
         date,
+        userId: user.id,
         userName: source.userName || user.name || "-",
         department: source.department || user.department || "-",
+        role: user.role || "employee",
+        shiftId: shift.id || source.shiftId || user.defaultShiftId || "default",
         shiftName: shift.name || source.shiftName || "-",
+        workStart: shift.workStart || settings.workStart || "09:00",
+        workEnd: shift.workEnd || settings.workEnd || "18:00",
         checkInText: checkInDate ? fmtTime(checkInDate) : "-",
         checkOutText: checkOutDate ? fmtTime(checkOutDate) : "-",
+        missingType: !firstIn ? "checkIn" : (!lastOut ? "checkOut" : ""),
         workHours,
         creditedLeaveHours,
         lateMinutes,
@@ -563,6 +584,24 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
         status
       };
     });
+}
+
+function expectedWorkDates(period, settings) {
+  const today = todayKey();
+  const dates = [];
+  const daysInMonth = new Date(period.year, period.month, 0).getDate();
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(period.year, period.month - 1, day);
+    const dateKey = localDateKey(date);
+    if (dateKey > today) continue;
+    if (!isCompanyRestDay(dateKey, settings)) dates.push(dateKey);
+  }
+  return dates;
+}
+
+function localDateKey(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
 }
 
 function resolveReportShift(row, user, settings) {
@@ -635,6 +674,8 @@ function isLeaveOnDate(item, date) {
 }
 
 function resolveReportStatus(firstIn, lastOut, creditedHours, lateMinutes, earlyLeaveMinutes, settings) {
+  if (!firstIn && !lastOut && creditedHours >= Number(settings.standardHours || 8)) return "normal";
+  if (!firstIn && !lastOut) return "missing";
   if (!firstIn || !lastOut) return "incomplete";
   if (lateMinutes > 0) return "late";
   if (earlyLeaveMinutes > 0) return "earlyLeave";
@@ -643,8 +684,104 @@ function resolveReportStatus(firstIn, lastOut, creditedHours, lateMinutes, early
 }
 
 function summaryStatusBadge(row) {
+  if (row.status === "missing") return `<span class="badge text-bg-danger">未打卡</span>`;
   if (row.status === "incomplete") return `<span class="badge text-bg-secondary">資料不完整</span>`;
   return badge(row.status);
+}
+
+function manualPunchActionHtml(row) {
+  if (!row.missingType) return "-";
+  const label = row.missingType === "checkIn" ? "補簽到" : "補簽退";
+  return `<button class="btn btn-sm btn-outline-primary" data-manual-punch data-user-id="${row.userId}" data-date="${row.date}" data-type="${row.missingType}">${label}</button>`;
+}
+
+async function createManualAttendanceRecord(dataset, usersById, settings) {
+  const user = usersById[dataset.userId];
+  if (!user) {
+    showToast("找不到員工資料，無法補登。", "danger");
+    return;
+  }
+
+  const shift = resolveReportShift({}, user, settings);
+  const type = dataset.type;
+  const date = dataset.date;
+  const defaultTime = type === "checkIn" ? shift.workStart : shift.workEnd;
+  const typeLabel = type === "checkIn" ? "簽到" : "簽退";
+  const time = window.prompt(`請輸入補登${typeLabel}時間（HH:mm）`, defaultTime);
+  if (time === null) return;
+  if (!/^\d{2}:\d{2}$/.test(time) || !isTimeValueValid(time)) {
+    showToast("補登時間格式錯誤，請使用 HH:mm，例如 18:00。", "warning");
+    return;
+  }
+
+  const reason = window.prompt("請輸入補登原因，例如：員工忘記打卡、設備異常");
+  if (reason === null) return;
+  if (!reason.trim()) {
+    showToast("補登原因必填，方便日後查核。", "warning");
+    return;
+  }
+
+  const timestamp = timeToDate(date, time);
+  await addDoc(collection(db, "attendance"), {
+    userId: user.id,
+    userName: user.name || user.email || "",
+    department: user.department || "",
+    type,
+    shiftId: shift.id || user.defaultShiftId || "default",
+    shiftName: shift.name || "預設班別",
+    workStart: shift.workStart || settings.workStart || "09:00",
+    workEnd: shift.workEnd || settings.workEnd || "18:00",
+    timestamp,
+    date,
+    latitude: null,
+    longitude: null,
+    status: "normal",
+    deviceInfo: "manual correction by admin",
+    manualCorrection: true,
+    correctionReason: reason.trim(),
+    correctedBy: adminProfile.id,
+    correctedByName: adminProfile.name || adminProfile.email || "",
+    createdAt: serverTimestamp()
+  });
+
+  await rebuildAttendanceDaily(user.id, date, user, settings);
+  showToast(`${user.name || user.email} ${date} 已補登${typeLabel}`, "success");
+  await renderAttendanceReport();
+}
+
+async function rebuildAttendanceDaily(userId, date, user, settings) {
+  const [attendanceSnap, leaveSnap] = await Promise.all([
+    getDocs(query(collection(db, "attendance"), where("userId", "==", userId), where("date", "==", date))),
+    getDocs(query(collection(db, "leaveRequests"), where("userId", "==", userId)))
+  ]);
+  const rows = attendanceSnap.docs.map((item) => item.data()).sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp));
+  const approvedLeaves = leaveSnap.docs
+    .map((item) => item.data())
+    .filter((item) => item.status === "approved");
+  const summary = buildAttendanceSummaryRows(rows, user, settings, approvedLeaves)[0];
+  if (!summary) return;
+  const firstIn = rows.find((row) => row.type === "checkIn");
+  const lastOut = rows.filter((row) => row.type === "checkOut").at(-1);
+
+  await setDoc(doc(db, "attendanceDaily", `${date}_${userId}`), {
+    userId,
+    userName: user.name || user.email || "",
+    department: user.department || "",
+    date,
+    shiftId: summary.shiftId,
+    shiftName: summary.shiftName,
+    workStart: summary.workStart,
+    workEnd: summary.workEnd,
+    checkInTime: firstIn?.timestamp || null,
+    checkOutTime: lastOut?.timestamp || null,
+    totalWorkHours: Number(summary.workHours || 0),
+    creditedLeaveHours: Number(summary.creditedLeaveHours || 0),
+    status: summary.status,
+    isEightHoursReached: Number(summary.workHours || 0) + Number(summary.creditedLeaveHours || 0) >= Number(settings.standardHours || 8),
+    updatedAt: serverTimestamp(),
+    updatedBy: adminProfile.id,
+    hasManualCorrection: rows.some((row) => row.manualCorrection)
+  }, { merge: true });
 }
 
 function minutesAfter(later, earlier) {
@@ -825,6 +962,11 @@ function readShiftSettings() {
 
 function isTimeRangeValid(start, end) {
   return timeToMinutes(end) > timeToMinutes(start);
+}
+
+function isTimeValueValid(value) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return Number.isInteger(hours) && Number.isInteger(minutes) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
 }
 
 function timeToMinutes(value) {

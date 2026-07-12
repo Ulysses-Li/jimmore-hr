@@ -14,14 +14,16 @@ let visibleMonth = startOfMonth(new Date());
 
 qs("#pageContent").innerHTML = `
   <div class="panel p-3">
-    <div class="calendar-title d-flex justify-content-between align-items-center mb-3">
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <button class="btn btn-outline-secondary btn-sm" id="prevMonthBtn" type="button">上個月</button>
+    <div class="calendar-title calendar-title-with-controls d-flex justify-content-between align-items-center mb-3">
+      <div class="calendar-month-heading d-flex align-items-center gap-2 flex-wrap">
         <h2 class="h5 mb-0" id="calendarMonthTitle"></h2>
+        <span class="badge text-bg-primary">已核准請假</span>
+      </div>
+      <div class="calendar-month-controls d-flex align-items-center gap-2 flex-wrap">
+        <button class="btn btn-outline-secondary btn-sm" id="prevMonthBtn" type="button">上個月</button>
         <button class="btn btn-outline-secondary btn-sm" id="nextMonthBtn" type="button">下個月</button>
         <button class="btn btn-outline-primary btn-sm" id="todayMonthBtn" type="button">今天</button>
       </div>
-      <span class="badge text-bg-primary">已核准請假</span>
     </div>
     <div class="calendar-grid" id="calendar"></div>
     <div class="calendar-list" id="calendarList"></div>

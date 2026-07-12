@@ -529,12 +529,28 @@ body {
   }
 
   .calendar-title {
+    flex-direction: column;
     align-items: flex-start !important;
     gap: 8px;
   }
 
   .calendar-title h2 {
     font-size: 1.1rem;
+  }
+
+  .calendar-month-heading {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .calendar-month-controls {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .calendar-month-controls .btn {
+    width: 100%;
   }
 
   .calendar-grid {

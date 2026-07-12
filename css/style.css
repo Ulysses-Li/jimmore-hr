@@ -127,10 +127,30 @@ body {
   gap: 12px;
 }
 
+.employee-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(120px, .8fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--jm-border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.employee-filter-count {
+  min-width: 72px;
+  color: var(--jm-muted);
+  font-size: .9rem;
+  font-weight: 700;
+  text-align: right;
+  padding-bottom: 6px;
+}
+
 .employee-editor-card {
   border: 1px solid var(--jm-border);
   border-radius: 8px;
-  padding: 14px;
+  padding: 10px;
   background: #fff;
 }
 
@@ -138,8 +158,8 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 12px;
+  gap: 10px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--jm-border);
 }
 
@@ -150,7 +170,7 @@ body {
 
 .employee-editor-email {
   color: var(--jm-muted);
-  font-size: .9rem;
+  font-size: .86rem;
   overflow-wrap: anywhere;
 }
 
@@ -164,9 +184,9 @@ body {
 
 .employee-editor-grid {
   display: grid;
-  grid-template-columns: minmax(190px, 1fr) minmax(240px, 1.25fr) minmax(220px, 1fr);
-  gap: 16px;
-  padding-top: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 10px 14px;
+  padding-top: 10px;
 }
 
 .employee-editor-more {
@@ -183,7 +203,7 @@ body {
 
 .employee-editor-section {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   align-content: start;
 }
 
@@ -204,8 +224,24 @@ body {
   gap: 10px;
 }
 
+.employee-editor-work {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 1.2fr) repeat(2, minmax(90px, .65fr)) minmax(110px, .75fr);
+  align-items: end;
+}
+
+.employee-editor-work .employee-editor-section-title {
+  grid-column: 1 / -1;
+}
+
 .employee-enabled {
   margin: 2px 0 0;
+}
+
+@media (min-width: 901px) {
+  .employee-editor-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .login-page {
@@ -392,6 +428,15 @@ body {
   .employee-editor-grid {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .employee-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .employee-filter-count {
+    text-align: left;
+    padding-bottom: 0;
   }
 
   .employee-editor-head {

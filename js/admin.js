@@ -105,6 +105,35 @@ async function renderEmployees() {
       <datalist id="departmentOptions">
         ${departments.map((department) => `<option value="${department}"></option>`).join("")}
       </datalist>
+      <div class="employee-filter-bar mb-3">
+        <div>
+          <label class="form-label" for="employeeSearch">搜尋</label>
+          <input class="form-control form-control-sm" id="employeeSearch" placeholder="姓名或 Email">
+        </div>
+        <div>
+          <label class="form-label" for="employeeDepartmentFilter">部門</label>
+          <select class="form-select form-select-sm" id="employeeDepartmentFilter">
+            <option value="">全部部門</option>
+            ${departments.map((department) => `<option value="${escapeHtml(department)}">${escapeHtml(department)}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" for="employeeRoleFilter">角色</label>
+          <select class="form-select form-select-sm" id="employeeRoleFilter">
+            <option value="">全部角色</option>
+            ${["employee", "manager", "admin"].map((role) => `<option value="${role}">${roleLabels[role]}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" for="employeeActiveFilter">狀態</label>
+          <select class="form-select form-select-sm" id="employeeActiveFilter">
+            <option value="">全部狀態</option>
+            <option value="active">啟用</option>
+            <option value="inactive">停用</option>
+          </select>
+        </div>
+        <div class="employee-filter-count" id="employeeFilterCount">${users.length} 人</div>
+      </div>
       <div class="employee-editor-list">
         ${users.map((row) => employeeEditorCard(row, users, shifts)).join("")}
       </div>
@@ -127,13 +156,15 @@ async function renderEmployees() {
       showToast("員工資料已更新", "success");
     });
   });
+  bindEmployeeFilters(users.length);
   collapseEmployeeDetailsOnMobile();
 }
 
 function employeeEditorCard(row, users, shifts) {
   const role = roleLabels[row.role] || row.role || "未設定";
   const enabled = row.isActive !== false;
-  return `<section class="employee-editor-card" data-id="${row.id}">
+  const searchText = `${row.name || ""} ${row.email || ""}`.toLowerCase();
+  return `<section class="employee-editor-card" data-id="${row.id}" data-search="${escapeHtml(searchText)}" data-department="${escapeHtml(row.department || "")}" data-role="${row.role || ""}" data-active="${enabled ? "active" : "inactive"}">
     <div class="employee-editor-head">
       <div>
         <div class="employee-editor-name">${escapeHtml(row.name || "未命名員工")}</div>
@@ -211,6 +242,33 @@ function collapseEmployeeDetailsOnMobile() {
   content.querySelectorAll(".employee-editor-more").forEach((item) => {
     item.removeAttribute("open");
   });
+}
+
+function bindEmployeeFilters(total) {
+  const search = qs("#employeeSearch");
+  const department = qs("#employeeDepartmentFilter");
+  const role = qs("#employeeRoleFilter");
+  const active = qs("#employeeActiveFilter");
+  const count = qs("#employeeFilterCount");
+  const cards = Array.from(content.querySelectorAll(".employee-editor-card"));
+  const applyFilters = () => {
+    const keyword = search.value.trim().toLowerCase();
+    const departmentValue = department.value;
+    const roleValue = role.value;
+    const activeValue = active.value;
+    let visible = 0;
+    cards.forEach((card) => {
+      const matched = (!keyword || card.dataset.search.includes(keyword))
+        && (!departmentValue || card.dataset.department === departmentValue)
+        && (!roleValue || card.dataset.role === roleValue)
+        && (!activeValue || card.dataset.active === activeValue);
+      card.hidden = !matched;
+      if (matched) visible += 1;
+    });
+    count.textContent = `${visible} / ${total} 人`;
+  };
+  [search, department, role, active].forEach((input) => input.addEventListener("input", applyFilters));
+  [department, role, active].forEach((input) => input.addEventListener("change", applyFilters));
 }
 
 function managerOptions(users, row) {

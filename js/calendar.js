@@ -21,8 +21,8 @@ qs("#pageContent").innerHTML = `
       </div>
       <div class="calendar-month-controls d-flex align-items-center gap-2 flex-wrap">
         <button class="btn btn-outline-secondary btn-sm" id="prevMonthBtn" type="button">上個月</button>
-        <button class="btn btn-outline-secondary btn-sm" id="nextMonthBtn" type="button">下個月</button>
         <button class="btn btn-outline-primary btn-sm" id="todayMonthBtn" type="button">今天</button>
+        <button class="btn btn-outline-secondary btn-sm" id="nextMonthBtn" type="button">下個月</button>
       </div>
     </div>
     <div class="calendar-grid" id="calendar"></div>

@@ -56,6 +56,7 @@ qs("#pageContent").innerHTML = `
           <dt class="col-5">班別</dt><dd class="col-7" id="shiftSummary">-</dd>
           <dt class="col-5">午休扣除</dt><dd class="col-7">${settings.lunchStart} - ${settings.lunchEnd}</dd>
           <dt class="col-5">標準工時</dt><dd class="col-7">${settings.standardHours} 小時</dd>
+          <dt class="col-5">今日應達</dt><dd class="col-7">${assignedShift ? scheduledWorkHours(todayKey(), assignedShift) : "-"} 小時${todayClosureText()}</dd>
         </dl>
       </div>
     </div>
@@ -93,7 +94,7 @@ function resolveStatus(type, at, approvedLeaves = [], shiftOverride = null) {
     const lateMinutes = Math.ceil((at.getTime() - start.getTime()) / 60000) - coveredMinutes - Number(settings.lateGraceMinutes || 0);
     return lateMinutes > 0 ? "late" : "normal";
   }
-  const end = timeToDate(dateKey, shift.workEnd);
+  const end = timeToDate(dateKey, effectiveWorkEndTime(dateKey, shift));
   const coveredMinutes = leaveOverlapMinutes(at, end, approvedLeaves);
   const earlyMinutes = Math.ceil((end.getTime() - at.getTime()) / 60000) - coveredMinutes;
   return earlyMinutes > 0 ? "earlyLeave" : "normal";
@@ -172,7 +173,8 @@ async function updateDaily(now) {
   const lunchHours = overlapHours(checkInTime, checkOutTime, timeToDate(date, settings.lunchStart), timeToDate(date, settings.lunchEnd));
   const total = Math.max(0, hoursBetween(checkInTime, checkOutTime) - lunchHours);
   const creditedLeaveHours = calculateApprovedLeaveWorkHours(date, approvedLeaves, shift);
-  const reached = total + creditedLeaveHours >= Number(settings.standardHours || 8);
+  const expectedHours = scheduledWorkHours(date, shift);
+  const reached = total + creditedLeaveHours >= expectedHours;
   const firstInStatus = resolveStatus("checkIn", checkInTime, approvedLeaves, shift);
   const lastOutStatus = resolveStatus("checkOut", checkOutTime, approvedLeaves, shift);
   const dailyStatus = lastOutStatus === "earlyLeave"
@@ -190,6 +192,8 @@ async function updateDaily(now) {
     shiftName: shift.name,
     workStart: shift.workStart,
     workEnd: shift.workEnd,
+    effectiveWorkEnd: effectiveWorkEndTime(date, shift),
+    expectedHours,
     checkInTime: firstIn.timestamp,
     checkOutTime: lastOut.timestamp,
     totalWorkHours: Number(total.toFixed(2)),
@@ -262,7 +266,7 @@ function resolveDisplayStatus(row, approvedLeaves, firstIn, lastOut) {
 
 function calculateApprovedLeaveWorkHours(date, approvedLeaves, shift) {
   const workStart = timeToDate(date, shift.workStart);
-  const workEnd = timeToDate(date, shift.workEnd);
+  const workEnd = timeToDate(date, effectiveWorkEndTime(date, shift));
   const lunchStart = timeToDate(date, settings.lunchStart);
   const lunchEnd = timeToDate(date, settings.lunchEnd);
   const minutes = approvedLeaves.reduce((sum, item) => {
@@ -273,6 +277,38 @@ function calculateApprovedLeaveWorkHours(date, approvedLeaves, shift) {
     return sum + Math.max(0, leaveWorkMinutes - lunchMinutes);
   }, 0);
   return minutes / 60;
+}
+
+function effectiveWorkEndTime(date, shift) {
+  const shiftEnd = shift.workEnd || settings.workEnd || "18:00";
+  const closure = specialClosureForDate(date);
+  if (!closure?.closeTime) return shiftEnd;
+  return timeToMinutes(closure.closeTime) < timeToMinutes(shiftEnd) ? closure.closeTime : shiftEnd;
+}
+
+function scheduledWorkHours(date, shift) {
+  const workStart = timeToDate(date, shift.workStart || settings.workStart || "09:00");
+  const workEnd = timeToDate(date, effectiveWorkEndTime(date, shift));
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const lunchOverlap = overlapHours(workStart, workEnd, lunchStart, lunchEnd);
+  return Number(Math.max(0, hoursBetween(workStart, workEnd) - lunchOverlap).toFixed(2));
+}
+
+function specialClosureForDate(date) {
+  return (Array.isArray(settings.specialClosureDates) ? settings.specialClosureDates : [])
+    .find((item) => item?.date === date && /^\d{2}:\d{2}$/.test(item.closeTime || ""));
+}
+
+function todayClosureText() {
+  const closure = specialClosureForDate(todayKey());
+  if (!closure?.closeTime) return "";
+  return `（${closure.closeTime} 提早關門${closure.reason ? `：${closure.reason}` : ""}）`;
+}
+
+function timeToMinutes(value) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
 }
 
 function leaveOverlapMinutes(start, end, approvedLeaves) {

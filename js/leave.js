@@ -14,6 +14,7 @@ bindLogout();
 const settings = await getWorkSettings();
 const assignedShift = getAssignedShift();
 const assignedShiftValid = isTimeRangeValid(assignedShift.workStart, assignedShift.workEnd);
+const proxyCandidates = await loadProxyCandidates();
 
 qs("#pageContent").innerHTML = `
   <div class="row g-3">
@@ -33,6 +34,14 @@ qs("#pageContent").innerHTML = `
           <div class="form-text">只計算班別上班時間，會自動扣除午休、六日與系統設定休息日；請假時數必須為整數小時，每天最多 ${settings.standardHours || 8} 小時。</div>
         </div>
         <div class="alert alert-secondary py-2" id="leaveHoursPreview">請選擇開始與結束時間。</div>
+        <div class="mb-3">
+          <label class="form-label" for="proxyUserId">職務代理人</label>
+          <select class="form-select" id="proxyUserId">
+            <option value="">未指定</option>
+            ${proxyCandidates.map((user) => `<option value="${user.id}" ${profile.proxyUserId === user.id ? "selected" : ""}>${escapeHtml(user.name || user.email || user.id)}</option>`).join("")}
+          </select>
+          <div class="form-text">請假期間由代理人協助交接工作；預設值可由管理員在員工管理設定。</div>
+        </div>
         <div class="mb-3"><label class="form-label" for="reason">原因</label><textarea class="form-control" id="reason" rows="3" required></textarea></div>
         <button class="btn btn-primary w-100">送出申請</button>
       </form>
@@ -41,7 +50,7 @@ qs("#pageContent").innerHTML = `
       <div class="panel p-3">
         <h2 class="h5 mb-3">我的請假紀錄</h2>
         <div class="table-responsive"><table class="table align-middle mb-0">
-          <thead><tr><th>假別</th><th>時間</th><th>時數</th><th>狀態</th></tr></thead>
+          <thead><tr><th>假別</th><th>時間</th><th>時數</th><th>狀態</th><th>列印</th></tr></thead>
           <tbody id="rows"></tbody>
         </table></div>
       </div>
@@ -74,10 +83,16 @@ qs("#leaveForm").addEventListener("submit", async (event) => {
     showToast("補休餘額不足", "warning");
     return;
   }
+  const proxyUserId = qs("#proxyUserId").value;
+  const proxyUser = proxyCandidates.find((item) => item.id === proxyUserId);
   await addDoc(collection(db, "leaveRequests"), {
     userId: profile.id,
     userName: profile.name,
     department: profile.department || "",
+    managerId: profile.managerId || "",
+    managerName: profile.managerName || "",
+    proxyUserId,
+    proxyUserName: proxyUser?.name || proxyUser?.email || "",
     leaveType: type,
     shiftId: assignedShift.id,
     shiftName: assignedShift.name,
@@ -105,7 +120,7 @@ async function render() {
       where("userId", "==", profile.id)
     ));
     const rows = snap.docs
-      .map((item) => item.data())
+      .map((item) => ({ id: item.id, ...item.data() }))
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
 
     qs("#rows").innerHTML = rows.length
@@ -115,12 +130,148 @@ async function render() {
           <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
           <td>${row.hours}</td>
           <td>${badge(row.status)}</td>
+          <td><button class="btn btn-sm btn-outline-primary" data-print-leave="${row.id}">列印PDF</button></td>
         </tr>`;
       }).join("")
-      : `<tr><td colspan="4" class="muted">尚無請假紀錄</td></tr>`;
+      : `<tr><td colspan="5" class="muted">尚無請假紀錄</td></tr>`;
+
+    qs("#rows").querySelectorAll("[data-print-leave]").forEach((button) => {
+      const row = rows.find((item) => item.id === button.dataset.printLeave);
+      button.addEventListener("click", () => openLeavePrintView(row));
+    });
   } catch (error) {
-    qs("#rows").innerHTML = `<tr><td colspan="4" class="text-danger">讀取請假紀錄失敗：${error.message}</td></tr>`;
+    qs("#rows").innerHTML = `<tr><td colspan="5" class="text-danger">讀取請假紀錄失敗：${error.message}</td></tr>`;
   }
+}
+
+function openLeavePrintView(row) {
+  if (!row) return;
+  const popup = window.open("", "_blank", "width=980,height=620");
+  if (!popup) {
+    showToast("瀏覽器封鎖了列印視窗，請允許彈出視窗後再試一次。", "warning");
+    return;
+  }
+  popup.document.open();
+  popup.document.write(leavePrintHtml(row));
+  popup.document.close();
+  popup.focus();
+}
+
+function leavePrintHtml(row) {
+  const start = toDate(row.startTime);
+  const end = toDate(row.endTime);
+  const hours = Number(row.hours || 0);
+  const fullDays = Math.floor(hours / Number(settings.standardHours || 8));
+  const remainingHours = Number((hours % Number(settings.standardHours || 8)).toFixed(2));
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>請假單 - ${escapeHtml(row.userName || profile.name || "")}</title>
+  <style>
+    @page { size: A4 portrait; margin: 9mm 12mm; }
+    * { box-sizing: border-box; }
+    html, body { width: 210mm; min-height: 297mm; }
+    body { font-family: "DFKai-SB", "標楷體", "Microsoft JhengHei", serif; color: #000; margin: 0; background: #fff; }
+    .sheet { width: 186mm; margin: 0 auto; page-break-inside: avoid; }
+    .form-copy { min-height: 131mm; padding-top: 3mm; }
+    .cut-line { border-top: 1px dashed #8a8a8a; margin: 5mm 0; }
+    .company { text-align: center; font-size: 17pt; letter-spacing: .72em; padding-left: .72em; margin-bottom: 2.5mm; }
+    .title { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: end; font-size: 15pt; margin-bottom: 5mm; border-bottom: 2px solid #000; padding-bottom: 1.2mm; }
+    .title span { text-align: center; border-bottom: 1px solid #000; padding-bottom: 1mm; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11.5pt; line-height: 1.35; border: 2px solid #000; }
+    td { border: 1px solid #000; height: 11.5mm; padding: 1.7mm 2.2mm; vertical-align: middle; overflow-wrap: anywhere; }
+    .label { text-align: center; font-weight: 700; white-space: nowrap; }
+    .center { text-align: center; }
+    .date-cell { letter-spacing: .18em; }
+    .period-label { text-align: center; font-weight: 700; font-size: 11pt; }
+    .period-cell { font-size: 11pt; line-height: 1.45; padding-left: 4mm; white-space: nowrap; }
+    .period-prefix { display: inline-block; width: 9mm; font-weight: 700; }
+    .hours-cell { font-size: 12pt; letter-spacing: .12em; }
+    .sign { height: 20mm; vertical-align: top; }
+    .note { height: 21mm; vertical-align: top; padding: 3mm 4mm; }
+    .print-actions { margin: 6mm auto 0; text-align: center; }
+    .print-actions button { font: 16px "Microsoft JhengHei", sans-serif; padding: 8px 18px; }
+    @media print {
+      html, body { width: auto; min-height: auto; }
+      .print-actions { display: none; }
+      .sheet { width: 100%; }
+      .form-copy { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    ${leavePrintFormCopy(row, start, end, fullDays, remainingHours)}
+    <div class="cut-line"></div>
+    ${leavePrintFormCopy(row, start, end, fullDays, remainingHours)}
+    <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
+  </div>
+</body>
+</html>`;
+}
+
+function leavePrintFormCopy(row, start, end, fullDays, remainingHours) {
+  return `
+    <div class="form-copy">
+      <div class="company">竣貿國際股份有限公司</div>
+      <div class="title"><span>請</span><span>假</span><span>單</span></div>
+      <table>
+        <colgroup>
+          <col style="width: 12%;">
+          <col style="width: 13%;">
+          <col style="width: 12%;">
+          <col style="width: 13%;">
+          <col style="width: 10%;">
+          <col style="width: 16%;">
+          <col style="width: 12%;">
+          <col style="width: 12%;">
+        </colgroup>
+        <tr>
+          <td class="label">中華民國</td>
+          <td colspan="5" class="center date-cell">${start.getFullYear() - 1911} 年 ${start.getMonth() + 1} 月 ${start.getDate()} 日</td>
+          <td class="label">星期</td>
+          <td class="center">${weekdayLabel(start)}</td>
+        </tr>
+        <tr>
+          <td class="label">單位</td>
+          <td class="center">${escapeHtml(row.department || profile.department || "")}</td>
+          <td class="label">假別</td>
+          <td class="center">${escapeHtml(leaveTypeLabel(row.leaveType))}</td>
+          <td class="period-label">請假期間</td>
+          <td colspan="3" class="period-cell"><span class="period-prefix">自</span>民國 ${start.getFullYear() - 1911} 年 ${start.getMonth() + 1} 月 ${start.getDate()} 日 ${pad2(start.getHours())} 時 ${pad2(start.getMinutes())} 分</td>
+        </tr>
+        <tr>
+          <td class="label">姓名</td>
+          <td class="center">${escapeHtml(row.userName || profile.name || "")}</td>
+          <td class="label">事由</td>
+          <td class="center">${escapeHtml(row.reason || "")}</td>
+          <td></td>
+          <td colspan="3" class="period-cell"><span class="period-prefix">至</span>民國 ${end.getFullYear() - 1911} 年 ${end.getMonth() + 1} 月 ${end.getDate()} 日 ${pad2(end.getHours())} 時 ${pad2(end.getMinutes())} 分</td>
+        </tr>
+        <tr>
+          <td class="label" colspan="2">請假時數</td>
+          <td colspan="6" class="center hours-cell">計 ${fullDays} 天 ${remainingHours} 小時 0 分</td>
+        </tr>
+        <tr>
+          <td class="label" colspan="2">核准簽章</td>
+          <td colspan="6" class="sign"></td>
+        </tr>
+        <tr>
+          <td class="label" colspan="2">備註</td>
+          <td colspan="6" class="note">職務代理人：${escapeHtml(row.proxyUserName || "")}</td>
+        </tr>
+      </table>
+    </div>`;
+}
+
+async function loadProxyCandidates() {
+  const snap = await getDocs(collection(db, "users"));
+  return snap.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((user) => user.id !== profile.id && user.isActive !== false)
+    .filter((user) => !profile.department || !user.department || user.department === profile.department)
+    .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
 }
 
 function toMillis(value) {
@@ -128,6 +279,28 @@ function toMillis(value) {
   if (value.toMillis) return value.toMillis();
   if (value.toDate) return value.toDate().getTime();
   return new Date(value).getTime();
+}
+
+function toDate(value) {
+  if (!value) return new Date("");
+  return value.toDate ? value.toDate() : new Date(value);
+}
+
+function weekdayLabel(date) {
+  return ["日", "一", "二", "三", "四", "五", "六"][date.getDay()] || "";
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function syncMinimumEndTime() {

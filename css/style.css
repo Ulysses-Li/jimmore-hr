@@ -122,6 +122,92 @@ body {
   font-weight: 600;
 }
 
+.employee-editor-list {
+  display: grid;
+  gap: 12px;
+}
+
+.employee-editor-card {
+  border: 1px solid var(--jm-border);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.employee-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--jm-border);
+}
+
+.employee-editor-name {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.employee-editor-email {
+  color: var(--jm-muted);
+  font-size: .9rem;
+  overflow-wrap: anywhere;
+}
+
+.employee-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.employee-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(240px, 1.25fr) minmax(220px, 1fr);
+  gap: 16px;
+  padding-top: 12px;
+}
+
+.employee-editor-more {
+  display: contents;
+}
+
+.employee-editor-more summary {
+  display: none;
+}
+
+.employee-editor-more-grid {
+  display: contents;
+}
+
+.employee-editor-section {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.employee-editor-section-title {
+  color: var(--jm-muted);
+  font-size: .82rem;
+  font-weight: 700;
+}
+
+.employee-field .form-label {
+  margin-bottom: 4px;
+  font-size: .82rem;
+}
+
+.employee-editor-inline {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.employee-enabled {
+  margin: 2px 0 0;
+}
+
 .login-page {
   min-height: 100vh;
   display: grid;
@@ -302,9 +388,90 @@ body {
   .page-wrap {
     padding: 16px;
   }
+
+  .employee-editor-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .employee-editor-head {
+    flex-direction: column;
+  }
+
+  .employee-editor-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .employee-editor-basic {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: grid;
+  }
+
+  .employee-editor-basic .employee-editor-section-title {
+    grid-column: 1 / -1;
+  }
+
+  .employee-editor-more {
+    display: block;
+    border-top: 1px solid var(--jm-border);
+    padding-top: 8px;
+  }
+
+  .employee-editor-more summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 34px;
+    color: var(--jm-muted);
+    cursor: pointer;
+    font-size: .9rem;
+    font-weight: 700;
+    list-style: none;
+  }
+
+  .employee-editor-more summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .employee-editor-more summary::after {
+    content: "展開";
+    color: #2563eb;
+    font-size: .82rem;
+    font-weight: 700;
+  }
+
+  .employee-editor-more[open] summary::after {
+    content: "收合";
+  }
+
+  .employee-editor-more-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding-top: 8px;
+  }
+
+  .employee-editor-relations,
+  .employee-editor-work {
+    display: contents;
+  }
+
+  .employee-editor-relations .employee-editor-section-title,
+  .employee-editor-work .employee-editor-section-title {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 640px) {
+  .employee-editor-card {
+    padding: 12px;
+  }
+
+  .employee-editor-actions .btn {
+    width: 100%;
+  }
+
   .calendar-title {
     align-items: flex-start !important;
     gap: 8px;

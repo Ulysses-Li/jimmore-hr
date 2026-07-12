@@ -59,11 +59,19 @@ async function renderHome() {
     getDocs(query(collection(db, "overtimeRequests"), where("status", "==", "pending"))),
     getDocs(collection(db, "attendanceDaily"))
   ]);
+  const userRows = users.docs.map((item) => ({ id: item.id, ...item.data() }));
+  const usersById = Object.fromEntries(userRows.map((user) => [user.id, user]));
+  const visibleLeavePending = leavePending.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((item) => requestVisibleToReviewer(item, usersById));
+  const visibleOvertimePending = overtimePending.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((item) => requestVisibleToReviewer(item, usersById));
   content.innerHTML = `
     <div class="row g-3 mb-4">
       <div class="col-md-3"><div class="panel p-3"><div class="muted">員工數</div><div class="stat-value">${users.size}</div></div></div>
-      <div class="col-md-3"><div class="panel p-3"><div class="muted">請假待審</div><div class="stat-value">${leavePending.size}</div></div></div>
-      <div class="col-md-3"><div class="panel p-3"><div class="muted">加班待審</div><div class="stat-value">${overtimePending.size}</div></div></div>
+      <div class="col-md-3"><div class="panel p-3"><div class="muted">請假待審</div><div class="stat-value">${visibleLeavePending.length}</div></div></div>
+      <div class="col-md-3"><div class="panel p-3"><div class="muted">加班待審</div><div class="stat-value">${visibleOvertimePending.length}</div></div></div>
       <div class="col-md-3"><div class="panel p-3"><div class="muted">出勤彙總</div><div class="stat-value">${attendance.size}</div></div></div>
     </div>
     <div class="panel p-3">
@@ -90,39 +98,21 @@ async function renderEmployees() {
   const users = snap.docs
     .map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hant"));
+  const usersById = Object.fromEntries(users.map((user) => [user.id, user]));
   const departments = buildDepartmentOptions(users);
   content.innerHTML = `
     <div class="panel p-3">
       <datalist id="departmentOptions">
         ${departments.map((department) => `<option value="${department}"></option>`).join("")}
       </datalist>
-      <div class="table-responsive"><table class="table align-middle">
-        <thead><tr><th>姓名</th><th>Email</th><th>部門</th><th>角色</th><th>預設班別</th><th>特休</th><th>補休</th><th>啟用</th><th></th></tr></thead>
-        <tbody>
-          ${users.map((row) => {
-            return `<tr data-id="${row.id}">
-              <td><input class="form-control form-control-sm" data-field="name" value="${row.name || ""}"></td>
-              <td>${row.email || ""}</td>
-              <td><input class="form-control form-control-sm" data-field="department" list="departmentOptions" value="${row.department || ""}" placeholder="選擇或輸入部門"></td>
-              <td><select class="form-select form-select-sm" data-field="role">
-                ${["employee", "manager", "admin"].map((role) => `<option value="${role}" ${row.role === role ? "selected" : ""}>${roleLabels[role]}</option>`).join("")}
-              </select></td>
-              <td><select class="form-select form-select-sm" data-field="defaultShiftId">
-                ${shifts.map((shift) => `<option value="${shift.id}" ${(row.defaultShiftId || shifts[0].id) === shift.id ? "selected" : ""}>${shift.name}</option>`).join("")}
-              </select></td>
-              <td><input class="form-control form-control-sm" type="number" data-field="annualLeaveHours" value="${row.annualLeaveHours ?? 0}"></td>
-              <td><input class="form-control form-control-sm" type="number" data-field="compensatoryLeaveHours" value="${row.compensatoryLeaveHours ?? 0}"></td>
-              <td><input class="form-check-input" type="checkbox" data-field="isActive" ${row.isActive !== false ? "checked" : ""}></td>
-              <td><button class="btn btn-sm btn-primary" data-save-user>儲存</button></td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table></div>
+      <div class="employee-editor-list">
+        ${users.map((row) => employeeEditorCard(row, users, shifts)).join("")}
+      </div>
     </div>`;
 
   content.querySelectorAll("[data-save-user]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const tr = button.closest("tr");
+      const tr = button.closest("[data-id]");
       const payload = {};
       tr.querySelectorAll("[data-field]").forEach((input) => {
         const field = input.dataset.field;
@@ -130,11 +120,113 @@ async function renderEmployees() {
         else if (input.type === "number") payload[field] = Number(input.value || 0);
         else payload[field] = input.value.trim();
       });
+      payload.managerName = usersById[payload.managerId]?.name || "";
+      payload.proxyUserName = usersById[payload.proxyUserId]?.name || "";
       payload.updatedAt = serverTimestamp();
       await updateDoc(doc(db, "users", tr.dataset.id), payload);
       showToast("員工資料已更新", "success");
     });
   });
+  collapseEmployeeDetailsOnMobile();
+}
+
+function employeeEditorCard(row, users, shifts) {
+  const role = roleLabels[row.role] || row.role || "未設定";
+  const enabled = row.isActive !== false;
+  return `<section class="employee-editor-card" data-id="${row.id}">
+    <div class="employee-editor-head">
+      <div>
+        <div class="employee-editor-name">${escapeHtml(row.name || "未命名員工")}</div>
+        <div class="employee-editor-email">${escapeHtml(row.email || "")}</div>
+      </div>
+      <div class="employee-editor-actions">
+        <span class="badge text-bg-${enabled ? "success" : "secondary"}">${enabled ? "啟用" : "停用"}</span>
+        <span class="badge text-bg-light text-dark">${escapeHtml(role)}</span>
+        <button class="btn btn-sm btn-primary" data-save-user>儲存</button>
+      </div>
+    </div>
+      <div class="employee-editor-grid">
+      <div class="employee-editor-section employee-editor-basic">
+        <div class="employee-editor-section-title">基本資料</div>
+        <div class="employee-field">
+          <label class="form-label">姓名</label>
+          <input class="form-control form-control-sm" data-field="name" value="${escapeHtml(row.name || "")}">
+        </div>
+        <div class="employee-field">
+          <label class="form-label">部門</label>
+          <input class="form-control form-control-sm" data-field="department" list="departmentOptions" value="${escapeHtml(row.department || "")}" placeholder="選擇或輸入部門">
+        </div>
+      </div>
+      <details class="employee-editor-more" open>
+        <summary>主管、代理人與假別</summary>
+        <div class="employee-editor-more-grid">
+      <div class="employee-editor-section employee-editor-relations">
+        <div class="employee-editor-section-title">權限與歸屬</div>
+        <div class="employee-field">
+          <label class="form-label">角色</label>
+          <select class="form-select form-select-sm" data-field="role">
+            ${["employee", "manager", "admin"].map((item) => `<option value="${item}" ${row.role === item ? "selected" : ""}>${roleLabels[item]}</option>`).join("")}
+          </select>
+        </div>
+        <div class="employee-field">
+          <label class="form-label">直屬主管</label>
+          <select class="form-select form-select-sm" data-field="managerId">${managerOptions(users, row)}</select>
+        </div>
+        <div class="employee-field">
+          <label class="form-label">職務代理人</label>
+          <select class="form-select form-select-sm" data-field="proxyUserId">${proxyOptions(users, row)}</select>
+        </div>
+      </div>
+      <div class="employee-editor-section employee-editor-work">
+        <div class="employee-editor-section-title">班別與假別</div>
+        <div class="employee-field">
+          <label class="form-label">預設班別</label>
+          <select class="form-select form-select-sm" data-field="defaultShiftId">
+            ${shifts.map((shift) => `<option value="${shift.id}" ${(row.defaultShiftId || shifts[0].id) === shift.id ? "selected" : ""}>${shift.name}</option>`).join("")}
+          </select>
+        </div>
+        <div class="employee-editor-inline">
+          <div class="employee-field">
+            <label class="form-label">特休</label>
+            <input class="form-control form-control-sm" type="number" data-field="annualLeaveHours" value="${row.annualLeaveHours ?? 0}">
+          </div>
+          <div class="employee-field">
+            <label class="form-label">補休</label>
+            <input class="form-control form-control-sm" type="number" data-field="compensatoryLeaveHours" value="${row.compensatoryLeaveHours ?? 0}">
+          </div>
+        </div>
+        <label class="form-check employee-enabled">
+          <input class="form-check-input" type="checkbox" data-field="isActive" ${enabled ? "checked" : ""}>
+          <span class="form-check-label">帳號啟用</span>
+        </label>
+      </div>
+        </div>
+      </details>
+    </div>
+  </section>`;
+}
+
+function collapseEmployeeDetailsOnMobile() {
+  if (!window.matchMedia("(max-width: 900px)").matches) return;
+  content.querySelectorAll(".employee-editor-more").forEach((item) => {
+    item.removeAttribute("open");
+  });
+}
+
+function managerOptions(users, row) {
+  const managers = users.filter((user) => user.id !== row.id && ["manager", "admin"].includes(user.role));
+  return [
+    `<option value="">未指定</option>`,
+    ...managers.map((user) => `<option value="${user.id}" ${row.managerId === user.id ? "selected" : ""}>${escapeHtml(user.name || user.email || user.id)}</option>`)
+  ].join("");
+}
+
+function proxyOptions(users, row) {
+  const candidates = users.filter((user) => user.id !== row.id && user.isActive !== false);
+  return [
+    `<option value="">未指定</option>`,
+    ...candidates.map((user) => `<option value="${user.id}" ${row.proxyUserId === user.id ? "selected" : ""}>${escapeHtml(user.name || user.email || user.id)}</option>`)
+  ].join("");
 }
 
 function buildDepartmentOptions(users) {
@@ -558,11 +650,12 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
       const checkInDate = firstIn ? timestampToDate(firstIn.timestamp) : null;
       const checkOutDate = lastOut ? timestampToDate(lastOut.timestamp) : null;
       const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
+      const expectedHours = scheduledWorkHours(date, shift, settings);
       const workHours = calculateReportWorkHours(date, checkInDate, checkOutDate, settings);
       const creditedLeaveHours = calculateReportApprovedLeaveWorkHours(date, dayLeaves, shift, settings);
       const lateMinutes = checkInDate ? calculateAdjustedLateMinutes(date, checkInDate, shift, settings, dayLeaves) : 0;
-      const earlyLeaveMinutes = checkOutDate ? calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, dayLeaves) : 0;
-      const status = resolveReportStatus(firstIn, lastOut, workHours + creditedLeaveHours, lateMinutes, earlyLeaveMinutes, settings);
+      const earlyLeaveMinutes = checkOutDate ? calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, settings, dayLeaves) : 0;
+      const status = resolveReportStatus(firstIn, lastOut, workHours + creditedLeaveHours, lateMinutes, earlyLeaveMinutes, expectedHours);
 
       return {
         date,
@@ -574,6 +667,8 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
         shiftName: shift.name || source.shiftName || "-",
         workStart: shift.workStart || settings.workStart || "09:00",
         workEnd: shift.workEnd || settings.workEnd || "18:00",
+        effectiveWorkEnd: effectiveWorkEndTime(date, shift, settings),
+        expectedHours,
         checkInText: checkInDate ? fmtTime(checkInDate) : "-",
         checkOutText: checkOutDate ? fmtTime(checkOutDate) : "-",
         missingType: !firstIn ? "checkIn" : (!lastOut ? "checkOut" : ""),
@@ -632,8 +727,8 @@ function calculateAdjustedLateMinutes(date, checkInDate, shift, settings, approv
   return Math.max(0, rawLateMinutes - leaveOverlapMinutes(expected, checkInDate, approvedLeaves));
 }
 
-function calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, approvedLeaves) {
-  const expected = timeToDate(date, shift.workEnd || "18:00");
+function calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, settings, approvedLeaves) {
+  const expected = timeToDate(date, effectiveWorkEndTime(date, shift, settings));
   const rawEarlyLeaveMinutes = minutesAfter(expected, checkOutDate);
   if (rawEarlyLeaveMinutes <= 0) return 0;
   return Math.max(0, rawEarlyLeaveMinutes - leaveOverlapMinutes(checkOutDate, expected, approvedLeaves));
@@ -641,7 +736,7 @@ function calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, approvedL
 
 function calculateReportApprovedLeaveWorkHours(date, approvedLeaves, shift, settings) {
   const workStart = timeToDate(date, shift.workStart || settings.workStart || "09:00");
-  const workEnd = timeToDate(date, shift.workEnd || settings.workEnd || "18:00");
+  const workEnd = timeToDate(date, effectiveWorkEndTime(date, shift, settings));
   const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
   const minutes = approvedLeaves.reduce((sum, item) => {
@@ -652,6 +747,27 @@ function calculateReportApprovedLeaveWorkHours(date, approvedLeaves, shift, sett
     return sum + Math.max(0, workMinutes - lunchMinutes);
   }, 0);
   return minutes / 60;
+}
+
+function effectiveWorkEndTime(date, shift, settings) {
+  const shiftEnd = shift.workEnd || settings.workEnd || "18:00";
+  const closure = specialClosureForDate(date, settings);
+  if (!closure?.closeTime) return shiftEnd;
+  return timeToMinutes(closure.closeTime) < timeToMinutes(shiftEnd) ? closure.closeTime : shiftEnd;
+}
+
+function scheduledWorkHours(date, shift, settings) {
+  const workStart = timeToDate(date, shift.workStart || settings.workStart || "09:00");
+  const workEnd = timeToDate(date, effectiveWorkEndTime(date, shift, settings));
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const lunchOverlap = Math.max(0, Math.min(workEnd, lunchEnd) - Math.max(workStart, lunchStart)) / 36e5;
+  return Number(Math.max(0, hoursBetween(workStart, workEnd) - lunchOverlap).toFixed(2));
+}
+
+function specialClosureForDate(date, settings) {
+  return (Array.isArray(settings.specialClosureDates) ? settings.specialClosureDates : [])
+    .find((item) => item?.date === date && /^\d{2}:\d{2}$/.test(item.closeTime || ""));
 }
 
 function leaveOverlapMinutes(start, end, approvedLeaves) {
@@ -673,13 +789,14 @@ function isLeaveOnDate(item, date) {
   return timestampToDate(item.startTime) <= dayEnd && timestampToDate(item.endTime) >= dayStart;
 }
 
-function resolveReportStatus(firstIn, lastOut, creditedHours, lateMinutes, earlyLeaveMinutes, settings) {
-  if (!firstIn && !lastOut && creditedHours >= Number(settings.standardHours || 8)) return "normal";
+function resolveReportStatus(firstIn, lastOut, creditedHours, lateMinutes, earlyLeaveMinutes, expectedHours) {
+  const requiredHours = Number(expectedHours || 0);
+  if (!firstIn && !lastOut && creditedHours >= requiredHours) return "normal";
   if (!firstIn && !lastOut) return "missing";
   if (!firstIn || !lastOut) return "incomplete";
   if (lateMinutes > 0) return "late";
   if (earlyLeaveMinutes > 0) return "earlyLeave";
-  if (creditedHours < Number(settings.standardHours || 8)) return "workTimeNotEnough";
+  if (creditedHours < requiredHours) return "workTimeNotEnough";
   return "normal";
 }
 
@@ -691,11 +808,17 @@ function summaryStatusBadge(row) {
 
 function manualPunchActionHtml(row) {
   if (!row.missingType) return "-";
+  if (adminProfile.role !== "admin") return `<span class="small muted">需管理員</span>`;
   const label = row.missingType === "checkIn" ? "補簽到" : "補簽退";
   return `<button class="btn btn-sm btn-outline-primary" data-manual-punch data-user-id="${row.userId}" data-date="${row.date}" data-type="${row.missingType}">${label}</button>`;
 }
 
 async function createManualAttendanceRecord(dataset, usersById, settings) {
+  if (adminProfile.role !== "admin") {
+    showToast("只有管理員可以補登打卡。", "warning");
+    return;
+  }
+
   const user = usersById[dataset.userId];
   if (!user) {
     showToast("找不到員工資料，無法補登。", "danger");
@@ -803,14 +926,20 @@ function dateKeyFromTimestamp(value) {
 
 async function renderRequests(collectionName) {
   const isLeave = collectionName === "leaveRequests";
-  const snap = await getDocs(collection(db, collectionName));
+  const [snap, usersSnap] = await Promise.all([
+    getDocs(collection(db, collectionName)),
+    getDocs(collection(db, "users"))
+  ]);
+  const users = usersSnap.docs.map((item) => ({ id: item.id, ...item.data() }));
+  const usersById = Object.fromEntries(users.map((user) => [user.id, user]));
   const requests = snap.docs
     .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((item) => requestVisibleToReviewer(item, usersById))
     .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
   content.innerHTML = `
     <div class="panel p-3">
       <div class="table-responsive"><table class="table align-middle mb-0">
-        <thead><tr><th>申請人</th><th>類型</th><th>時間</th><th>時數</th><th>原因</th><th>狀態</th><th></th></tr></thead>
+        <thead><tr><th>申請人</th><th>類型</th><th>時間</th><th>時數</th><th>職務代理人</th><th>原因</th><th>狀態</th><th></th></tr></thead>
         <tbody>${requests.length ? requests.map((row) => {
           const type = isLeave ? leaveTypeLabel(row.leaveType) : (row.convertToCompTime ? "加班轉補休" : "加班費");
           return `<tr data-id="${row.id}" data-user-id="${row.userId}" data-hours="${row.hours}" data-kind="${row.leaveType || ""}" data-comp="${row.convertToCompTime ? "1" : "0"}">
@@ -818,11 +947,12 @@ async function renderRequests(collectionName) {
             <td>${type}</td>
             <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
             <td>${row.hours}</td>
+            <td>${isLeave ? escapeHtml(row.proxyUserName || "-") : "-"}</td>
             <td>${row.reason || "-"}</td>
             <td>${badge(row.status)}</td>
             <td>${row.status === "pending" ? `<div class="btn-group btn-group-sm"><button class="btn btn-success" data-approve>核准</button><button class="btn btn-outline-danger" data-reject>駁回</button></div>` : "-"}</td>
           </tr>`;
-        }).join("") : `<tr><td colspan="7" class="muted">尚無資料</td></tr>`}</tbody>
+        }).join("") : `<tr><td colspan="8" class="muted">尚無資料</td></tr>`}</tbody>
       </table></div>
     </div>`;
 
@@ -832,6 +962,15 @@ async function renderRequests(collectionName) {
   content.querySelectorAll("[data-reject]").forEach((button) => {
     button.addEventListener("click", () => reviewRequest(collectionName, button.closest("tr"), "rejected"));
   });
+}
+
+function requestVisibleToReviewer(request, usersById) {
+  if (adminProfile.role === "admin") return true;
+  if (request.userId === adminProfile.id) return false;
+  const user = usersById[request.userId] || {};
+  if (user.managerId === adminProfile.id || request.managerId === adminProfile.id) return true;
+  const hasExplicitManager = Boolean(user.managerId || request.managerId);
+  return !hasExplicitManager && Boolean(adminProfile.department) && user.department === adminProfile.department;
 }
 
 function mapLink(latitude, longitude) {
@@ -908,6 +1047,11 @@ async function renderSettings() {
           <textarea class="form-control" id="holidayDates" rows="4" placeholder="每行一個日期，例如 2026-01-01">${formatHolidayDates(settings.holidayDates)}</textarea>
           <div class="form-text">六日會自動排除；這裡只需要填政府公告國定假日、補假或公司指定休息日，格式 YYYY-MM-DD。</div>
         </div>
+        <div class="col-12">
+          <label class="form-label" for="specialClosureDates">特殊提早下班日</label>
+          <textarea class="form-control" id="specialClosureDates" rows="4" placeholder="每行一筆：2026-07-10 17:00 颱風提早關門">${formatSpecialClosureDates(settings.specialClosureDates)}</textarea>
+          <div class="form-text">格式：YYYY-MM-DD HH:mm 原因。例：2026-07-10 17:00 颱風提早關門。當天早退與應達工時會改用這個關門時間。</div>
+        </div>
       </div>
       <button class="btn btn-primary mt-3">儲存設定</button>
     </form>`;
@@ -927,6 +1071,7 @@ async function renderSettings() {
       lunchStart: qs("#lunchStart").value,
       lunchEnd: qs("#lunchEnd").value,
       holidayDates: readHolidayDates(),
+      specialClosureDates: readSpecialClosureDates(),
       standardHours: Number(qs("#standardHours").value),
       lateGraceMinutes: Number(qs("#lateGraceMinutes").value),
       updatedAt: serverTimestamp(),
@@ -983,6 +1128,15 @@ function formatHolidayDates(value) {
   return value.filter(Boolean).sort().join("\n");
 }
 
+function formatSpecialClosureDates(value) {
+  if (!Array.isArray(value)) return "";
+  return value
+    .filter((item) => item?.date && item?.closeTime)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((item) => `${item.date} ${item.closeTime}${item.reason ? ` ${item.reason}` : ""}`)
+    .join("\n");
+}
+
 function readHolidayDates() {
   return qs("#holidayDates").value
     .split(/\s|,|，/)
@@ -990,4 +1144,31 @@ function readHolidayDates() {
     .filter(Boolean)
     .filter((item, index, array) => /^\d{4}-\d{2}-\d{2}$/.test(item) && array.indexOf(item) === index)
     .sort();
+}
+
+function readSpecialClosureDates() {
+  const byDate = new Map();
+  qs("#specialClosureDates").value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const match = line.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?:\s+(.+))?$/);
+      if (!match || !isTimeValueValid(match[2])) return;
+      byDate.set(match[1], {
+        date: match[1],
+        closeTime: match[2],
+        reason: (match[3] || "").trim()
+      });
+    });
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
 }

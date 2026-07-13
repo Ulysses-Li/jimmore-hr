@@ -288,9 +288,10 @@ function proxyOptions(users, row) {
 }
 
 function buildDepartmentOptions(users) {
-  const defaults = ["管理", "產品管理", "工程", "研發", "製造", "品保", "生管", "採購", "財務", "會計", "人資", "行政", "業務", "行銷", "內銷", "外銷", "總經理"];
-  const existing = users.map((user) => user.department).filter(Boolean);
-  return Array.from(new Set([...existing, ...defaults])).sort((a, b) => a.localeCompare(b, "zh-Hant"));
+  const existing = users
+    .map((user) => String(user.department || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(existing)).sort((a, b) => a.localeCompare(b, "zh-Hant"));
 }
 
 async function renderAttendanceReport() {

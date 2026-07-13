@@ -364,6 +364,7 @@ async function renderAttendanceReport() {
         </div>
         <div class="d-flex align-items-center gap-2">
           <span class="badge text-bg-secondary" id="attendanceSummaryBadge">尚未選擇員工</span>
+          <button class="btn btn-sm btn-outline-secondary" id="attendancePrintSheet" disabled>列印出勤表</button>
           <button class="btn btn-sm btn-outline-primary" id="attendanceExportCsv" disabled>下載 CSV</button>
         </div>
       </div>
@@ -507,6 +508,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
   const periodLabel = qs("#attendancePeriodLabel");
   const statsHost = qs("#attendanceMonthlyStats");
   const exportButton = qs("#attendanceExportCsv");
+  const printButton = qs("#attendancePrintSheet");
 
   if (!userId) {
     summaryBadge.className = "badge text-bg-secondary";
@@ -520,6 +522,8 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
     statsHost.innerHTML = monthlyStatsHtml(null);
     exportButton.disabled = true;
     exportButton.onclick = null;
+    printButton.disabled = true;
+    printButton.onclick = null;
     summaryBody.innerHTML = `<tr><td colspan="11" class="muted">請先選擇員工</td></tr>`;
     leaveBody.innerHTML = `<tr><td colspan="5" class="muted">請先選擇員工</td></tr>`;
     detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
@@ -544,6 +548,8 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
   statsHost.innerHTML = monthlyStatsHtml(monthlyStats);
   exportButton.disabled = !summaryRows.length;
   exportButton.onclick = () => downloadAttendanceCsv(summaryRows, user, period);
+  printButton.disabled = !summaryRows.length;
+  printButton.onclick = () => openAttendancePrintView(user, summaryRows, attendanceRows, userApprovedLeaves, settings, period);
 
   summaryBody.innerHTML = summaryRows.length ? summaryRows.map((row) => {
     return `<tr>
@@ -646,6 +652,194 @@ function monthlyStatsHtml(stats) {
     <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">總工時</div><div class="fw-bold">${stats.workHours} 小時</div></div></div>
     <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">遲到</div><div class="fw-bold">${stats.lateCount} 次 / ${stats.lateMinutes} 分</div></div></div>
     <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">早退 / 異常</div><div class="fw-bold">${stats.earlyLeaveCount} 次 / ${stats.abnormalCount} 天</div></div></div>`;
+}
+
+function openAttendancePrintView(user, summaryRows, attendanceRows, approvedLeaves, settings, period) {
+  const popup = window.open("", "_blank", "width=1200,height=820");
+  if (!popup) {
+    showToast("瀏覽器封鎖列印視窗，請允許彈出視窗後再試一次。", "warning");
+    return;
+  }
+  popup.document.open();
+  popup.document.write(attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, settings, period));
+  popup.document.close();
+  popup.focus();
+}
+
+function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, settings, period) {
+  const rows = buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLeaves, settings, period);
+  const totalWorkHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2));
+  const totalLeaveHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.creditedLeaveHours || 0), 0).toFixed(2));
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>出勤紀錄 - ${escapeHtml(user.name || user.email || "")}</title>
+  <style>
+    @page { size: A4 landscape; margin: 9mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #fff; color: #000; font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+    .sheet { width: 279mm; margin: 0 auto; padding: 2mm 0; }
+    .topline { display: grid; grid-template-columns: 1.4fr .8fr 1fr; align-items: end; gap: 8mm; margin-bottom: 3mm; }
+    .company { text-align: center; font-weight: 700; font-size: 17pt; letter-spacing: .08em; }
+    .meta { font-size: 13pt; white-space: nowrap; }
+    .meta strong { display: inline-block; min-width: 26mm; border-bottom: 1px solid #000; text-align: center; padding: 0 2mm; }
+    .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 2px solid #000; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10.5pt; line-height: 1.15; }
+    .left-table { border-right: 2px solid #000; }
+    th, td { border: 1px solid #000; text-align: center; vertical-align: middle; padding: 1mm .8mm; height: 9.5mm; }
+    th { font-weight: 700; }
+    .day { width: 7mm; font-size: 13pt; }
+    .week { width: 7mm; font-size: 11pt; }
+    .time { width: 17mm; }
+    .rest { width: 8mm; }
+    .hours { width: 10mm; }
+    .leave-hours { width: 11mm; }
+    .leave-type { width: 13mm; }
+    .note { width: 27mm; }
+    .rest-label { writing-mode: vertical-rl; letter-spacing: .18em; font-size: 12pt; }
+    .rest-day td:not(.rest-cell), .empty-day td { background: #aaa; }
+    .empty-day td { color: transparent; }
+    .summary-row td { height: 11mm; font-size: 12pt; background: #fff; }
+    .print-actions { margin-top: 5mm; text-align: center; }
+    .print-actions button { font: 15px "Microsoft JhengHei", sans-serif; padding: 8px 18px; }
+    @media print {
+      .print-actions { display: none; }
+      .sheet { width: auto; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="topline">
+      <div class="company">竣貿國際股份有限公司 出勤紀錄</div>
+      <div class="meta">員工姓名：<strong>${escapeHtml(user.name || "")}</strong></div>
+      <div class="meta">紀錄年月：<strong>${period.year - 1911}</strong> 年 <strong>${period.month}</strong> 月</div>
+    </div>
+    <div class="tables">
+      ${attendancePrintTable(rows.slice(0, 16), "left-table", settings)}
+      ${attendancePrintTable(rows.slice(16, 32), "", settings)}
+      <table class="left-table"><tr class="summary-row"><td>出勤總時數統計</td><td>${totalWorkHours} 小時</td></tr></table>
+      <table><tr class="summary-row"><td>請假總時數統計</td><td>${totalLeaveHours} 小時</td></tr></table>
+    </div>
+    <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
+  </div>
+</body>
+</html>`;
+}
+
+function attendancePrintTable(rows, className, settings) {
+  return `<table class="${className}">
+    <colgroup>
+      <col class="day"><col class="week">
+      <col class="time"><col class="time"><col class="rest">
+      <col class="time"><col class="time"><col class="hours"><col class="leave-hours"><col class="leave-type"><col class="note">
+    </colgroup>
+    <thead>
+      <tr>
+        <th colspan="2" rowspan="2">日期</th>
+        <th colspan="2">上午出勤</th>
+        <th rowspan="2">休息<br>時間</th>
+        <th colspan="2">下午出勤</th>
+        <th rowspan="2">出勤<br>時數</th>
+        <th rowspan="2">請假<br>時數</th>
+        <th rowspan="2">假<br>別</th>
+        <th rowspan="2">備註</th>
+      </tr>
+      <tr>
+        <th>簽到時間</th><th>簽退時間</th><th>簽到時間</th><th>簽退時間</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((row) => attendancePrintRow(row, settings)).join("")}
+    </tbody>
+  </table>`;
+}
+
+function attendancePrintRow(row, settings) {
+  if (!row.day) {
+    return `<tr class="empty-day"><td></td><td></td><td></td><td></td><td class="rest-cell"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+  }
+  const className = row.isRestDay ? "rest-day" : "";
+  return `<tr class="${className}">
+    <td>${row.day}</td>
+    <td>${row.weekday}</td>
+    <td>${escapeHtml(row.morningIn)}</td>
+    <td>${escapeHtml(row.morningOut)}</td>
+    <td class="rest-cell"><span class="rest-label">${escapeHtml(printLunchLabel(settings))}</span></td>
+    <td>${escapeHtml(row.afternoonIn)}</td>
+    <td>${escapeHtml(row.afternoonOut)}</td>
+    <td>${row.workHours || ""}</td>
+    <td>${row.leaveHours || ""}</td>
+    <td>${escapeHtml(row.leaveTypes)}</td>
+    <td>${escapeHtml(row.note)}</td>
+  </tr>`;
+}
+
+function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLeaves, settings, period) {
+  const summaryByDate = new Map(summaryRows.map((row) => [row.date, row]));
+  const rowsByDate = new Map();
+  attendanceRows.forEach((row) => {
+    const date = row.date || dateKeyFromTimestamp(row.timestamp);
+    if (!date) return;
+    if (!rowsByDate.has(date)) rowsByDate.set(date, []);
+    rowsByDate.get(date).push(row);
+  });
+
+  const daysInMonth = new Date(period.year, period.month, 0).getDate();
+  const rows = [];
+  for (let day = 1; day <= 32; day += 1) {
+    if (day > daysInMonth) {
+      rows.push({ day: "" });
+      continue;
+    }
+    const date = `${period.year}-${String(period.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const summary = summaryByDate.get(date);
+    const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
+    rows.push({
+      day,
+      weekday: weekdayShort(new Date(`${date}T00:00:00`)),
+      isRestDay: isCompanyRestDay(date, settings),
+      ...attendancePrintPunches(date, rowsByDate.get(date) || [], settings),
+      workHours: summary?.workHours ? Number(summary.workHours).toFixed(2).replace(/\.00$/, "") : "",
+      leaveHours: summary?.creditedLeaveHours ? Number(summary.creditedLeaveHours).toFixed(2).replace(/\.00$/, "") : "",
+      leaveTypes: Array.from(new Set(dayLeaves.map((item) => leaveTypeLabel(item.leaveType)))).join("、"),
+      note: summary && summary.status !== "normal" ? summaryStatusText(summary.status) : ""
+    });
+  }
+  return [...rows.slice(0, 16), ...rows.slice(16, 32)];
+}
+
+function attendancePrintPunches(date, rows, settings) {
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const ordered = [...rows].sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp));
+  const checkIns = ordered.filter((row) => row.type === "checkIn").map((row) => timestampToDate(row.timestamp));
+  const checkOuts = ordered.filter((row) => row.type === "checkOut").map((row) => timestampToDate(row.timestamp));
+  const morningIn = checkIns.find((time) => time < lunchEnd) || checkIns[0] || null;
+  const morningOut = [...checkOuts].reverse().find((time) => time <= lunchEnd) || null;
+  const afternoonIn = checkIns.find((time) => time >= lunchEnd) || null;
+  const afternoonOut = [...checkOuts].reverse().find((time) => time >= lunchStart) || checkOuts[checkOuts.length - 1] || null;
+  return {
+    morningIn: printTime(morningIn),
+    morningOut: printTime(morningOut),
+    afternoonIn: printTime(afternoonIn),
+    afternoonOut: printTime(afternoonOut)
+  };
+}
+
+function printTime(value) {
+  return value ? fmtTime(value) : "";
+}
+
+function printLunchLabel(settings) {
+  const start = settings.lunchStart || "12:00";
+  const end = settings.lunchEnd || "13:00";
+  return `${start}-${end}`;
+}
+
+function weekdayShort(date) {
+  return ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
 }
 
 function downloadAttendanceCsv(summaryRows, user, period) {

@@ -351,6 +351,9 @@ async function renderAttendanceReport() {
         </div>
       </div>
       <div class="form-text">人事月報以月份為單位；切換 1 到 12 月後，彙總與原始明細都只顯示該月資料。</div>
+      <div class="d-flex justify-content-end mt-3">
+        <button class="btn btn-outline-primary" id="attendanceCompanyExportCsv" type="button">匯出全公司 CSV</button>
+      </div>
     </div>
     ${todayMissingAttendanceHtml(todayMissingUsers, today, settings)}
     <div class="panel p-3 mb-3">
@@ -411,6 +414,9 @@ async function renderAttendanceReport() {
   qs("#attendanceUserFilter").addEventListener("change", renderCurrentSelection);
   qs("#attendanceYearFilter").addEventListener("change", renderCurrentSelection);
   qs("#attendanceMonthFilter").addEventListener("change", renderCurrentSelection);
+  qs("#attendanceCompanyExportCsv").addEventListener("click", () => {
+    downloadCompanyAttendanceCsv(users, allAttendanceRows, approvedLeaveRows, settings, selectedAttendancePeriod());
+  });
 }
 
 function buildTodayMissingClockInUsers(users, attendanceRows, settings, today) {
@@ -661,6 +667,54 @@ function downloadAttendanceCsv(summaryRows, user, period) {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = `${period.year}-${String(period.month).padStart(2, "0")}_${user.name || user.email || "attendance"}_出缺勤月報.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function downloadCompanyAttendanceCsv(users, allAttendanceRows, approvedLeaveRows, settings, period) {
+  const activeUsers = users
+    .filter((user) => user.isActive !== false)
+    .sort((a, b) => String(a.department || "").localeCompare(String(b.department || ""), "zh-Hant")
+      || String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
+  if (!activeUsers.length) {
+    showToast("沒有可匯出的啟用員工。", "warning");
+    return;
+  }
+
+  const rows = activeUsers.flatMap((user) => {
+    const attendanceRows = allAttendanceRows.filter((row) => row.userId === user.id && isRowInPeriod(row, period));
+    const userApprovedLeaves = approvedLeaveRows.filter((row) => row.userId === user.id);
+    return buildAttendanceSummaryRows(attendanceRows, user, settings, userApprovedLeaves, period)
+      .map((row) => ({ ...row, email: user.email || "", roleName: roleLabels[user.role] || user.role || "-" }));
+  }).sort((a, b) => b.date.localeCompare(a.date)
+    || String(a.department || "").localeCompare(String(b.department || ""), "zh-Hant")
+    || String(a.userName || "").localeCompare(String(b.userName || ""), "zh-Hant"));
+
+  if (!rows.length) {
+    showToast("這個月份沒有可匯出的出缺勤資料。", "warning");
+    return;
+  }
+
+  const headers = ["日期", "員工", "Email", "角色", "部門", "班別", "簽到", "簽退", "工時", "遲到分鐘", "早退分鐘", "狀態"];
+  const csvRows = rows.map((row) => [
+    row.date,
+    row.userName,
+    row.email,
+    row.roleName,
+    row.department,
+    row.shiftName,
+    row.checkInText,
+    row.checkOutText,
+    row.workHours,
+    row.lateMinutes || 0,
+    row.earlyLeaveMinutes || 0,
+    summaryStatusText(row.status)
+  ]);
+  const csv = [headers, ...csvRows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${period.year}-${String(period.month).padStart(2, "0")}_全公司出缺勤月報.csv`;
   link.click();
   URL.revokeObjectURL(link.href);
 }

@@ -352,7 +352,7 @@ async function renderAttendanceReport() {
       </div>
       <div class="form-text">人事月報以月份為單位；切換 1 到 12 月後，彙總與原始明細都只顯示該月資料。</div>
       <div class="d-flex justify-content-end mt-3">
-        <button class="btn btn-outline-primary" id="attendanceCompanyExportCsv" type="button">匯出全公司 Excel</button>
+        <button class="btn btn-outline-primary" id="attendanceCompanyExportCsv" type="button">全公司出勤紀錄 EXCEL</button>
       </div>
     </div>
     ${todayMissingAttendanceHtml(todayMissingUsers, today, settings)}

@@ -105,16 +105,15 @@ async function punch(type) {
   try {
     const at = new Date();
     const todayRecords = await loadTodayRecords(todayKey(at));
-    const existingFirstIn = todayRecords.find((item) => item.type === "checkIn");
-    const existingLastOut = todayRecords.filter((item) => item.type === "checkOut").at(-1);
-    if (type === "checkIn" && existingFirstIn) {
-      throw new Error(`今日已於 ${fmtTime(existingFirstIn.timestamp)} 完成簽到，不能重複簽到。`);
+    const lastRecord = todayRecords.at(-1);
+    if (type === "checkIn" && lastRecord?.type === "checkIn") {
+      throw new Error(`目前已於 ${fmtTime(lastRecord.timestamp)} 簽到，請先簽退後再簽到。`);
     }
-    if (type === "checkOut" && !existingFirstIn) {
+    if (type === "checkOut" && !todayRecords.some((item) => item.type === "checkIn")) {
       throw new Error("今日尚未簽到，請先完成上班簽到。");
     }
-    if (type === "checkOut" && existingLastOut) {
-      throw new Error(`今日已於 ${fmtTime(existingLastOut.timestamp)} 完成簽退，不能重複簽退。`);
+    if (type === "checkOut" && lastRecord?.type !== "checkIn") {
+      throw new Error(`目前已於 ${fmtTime(lastRecord?.timestamp)} 簽退，如需再次外出前請先簽到。`);
     }
 
     const pos = await getPosition();
@@ -218,18 +217,16 @@ async function render() {
   const rows = await loadTodayRecords(date);
   const firstIn = rows.find((item) => item.type === "checkIn");
   const lastOut = rows.filter((item) => item.type === "checkOut").at(-1);
-  const visibleRows = [firstIn, lastOut].filter((row, index, list) => row && list.indexOf(row) === index);
-  const ignoredRows = Math.max(0, rows.length - visibleRows.length);
-  qs("#rows").innerHTML = visibleRows.length
-    ? `${visibleRows.map((row) => `<tr>
+  qs("#rows").innerHTML = rows.length
+    ? rows.map((row) => `<tr>
       <td>${fmtDateTime(row.timestamp)}</td>
       <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
       <td>${badge(resolveDisplayStatus(row, approvedLeaves, firstIn, lastOut))}</td>
       <td>${mapLink(row.latitude, row.longitude)}</td>
-    </tr>`).join("")}${ignoredRows ? `<tr><td colspan="4" class="small muted">已忽略 ${ignoredRows} 筆重複打卡紀錄，出勤計算只採第一次簽到與最後一次簽退。</td></tr>` : ""}`
+    </tr>`).join("")
     : `<tr><td colspan="4" class="muted">今日尚無紀錄</td></tr>`;
 
-  updateActionState(firstIn, lastOut);
+  updateActionState(rows);
   updateShiftSummary(firstIn);
   qs("#todaySummary").innerHTML = `
     <span class="me-3">簽到：${fmtTime(firstIn?.timestamp)}</span>
@@ -383,15 +380,17 @@ function updateShiftSummary(firstIn) {
   qs("#shiftSummary").textContent = selected ? shiftText(selected) : "尚未設定班別";
 }
 
-function updateActionState(firstIn, lastOut) {
+function updateActionState(rows) {
   const hint = qs("#attendanceHint");
   const checkInBtn = qs("#checkInBtn");
   const checkOutBtn = qs("#checkOutBtn");
+  const lastRecord = rows.at(-1);
+  const nextAction = !lastRecord || lastRecord.type === "checkOut" ? "checkIn" : "checkOut";
 
-  checkInBtn.classList.toggle("btn-success", !firstIn);
-  checkInBtn.classList.toggle("btn-outline-success", Boolean(firstIn));
-  checkOutBtn.classList.toggle("btn-warning", Boolean(firstIn && !lastOut));
-  checkOutBtn.classList.toggle("btn-outline-warning", !firstIn || Boolean(lastOut));
+  checkInBtn.classList.toggle("btn-success", nextAction === "checkIn");
+  checkInBtn.classList.toggle("btn-outline-success", nextAction !== "checkIn");
+  checkOutBtn.classList.toggle("btn-warning", nextAction === "checkOut");
+  checkOutBtn.classList.toggle("btn-outline-warning", nextAction !== "checkOut");
 
   if (!assignedShift) {
     hint.className = "alert alert-warning py-2 mb-3";
@@ -401,23 +400,23 @@ function updateActionState(firstIn, lastOut) {
     return;
   }
 
-  if (!firstIn) {
+  if (!lastRecord) {
     hint.className = "alert alert-info py-2 mb-3";
     hint.textContent = "今日尚未簽到。請先按「上班簽到」。";
     checkInBtn.disabled = false;
     checkOutBtn.disabled = true;
     return;
   }
-  if (!lastOut) {
+  if (lastRecord.type === "checkIn") {
     hint.className = "alert alert-success py-2 mb-3";
-    hint.textContent = `今日已於 ${fmtTime(firstIn.timestamp)} 簽到。下班時請按「下班簽退」。`;
+    hint.textContent = `目前已於 ${fmtTime(lastRecord.timestamp)} 簽到。外出或下班時請按「下班簽退」。`;
     checkInBtn.disabled = true;
     checkOutBtn.disabled = false;
     return;
   }
   hint.className = "alert alert-secondary py-2 mb-3";
-  hint.textContent = `今日已完成：簽到 ${fmtTime(firstIn.timestamp)}，簽退 ${fmtTime(lastOut.timestamp)}。`;
-  checkInBtn.disabled = true;
+  hint.textContent = `目前已於 ${fmtTime(lastRecord.timestamp)} 簽退。如需返回上班，可再次按「上班簽到」。`;
+  checkInBtn.disabled = false;
   checkOutBtn.disabled = true;
 }
 

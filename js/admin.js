@@ -698,6 +698,7 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
     .leave-hours { width: 7.5mm; }
     .leave-type { width: 10mm; }
     .note { width: 21mm; }
+    .punch-time { white-space: pre-line; font-size: 6.8pt; line-height: 1.05; }
     .rest-label { display: block; font-size: 6.5pt; line-height: 1.05; white-space: pre-line; }
     .rest-day td:not(.rest-cell), .empty-day td { background: #aaa; }
     .empty-day td { color: transparent; }
@@ -765,11 +766,11 @@ function attendancePrintRow(row, settings) {
   return `<tr class="${className}">
     <td>${row.day}</td>
     <td>${row.weekday}</td>
-    <td>${escapeHtml(row.morningIn)}</td>
-    <td>${escapeHtml(row.morningOut)}</td>
+    <td class="punch-time">${escapeHtml(row.morningIn)}</td>
+    <td class="punch-time">${escapeHtml(row.morningOut)}</td>
     <td class="rest-cell"><span class="rest-label">${escapeHtml(printLunchLabel(settings))}</span></td>
-    <td>${escapeHtml(row.afternoonIn)}</td>
-    <td>${escapeHtml(row.afternoonOut)}</td>
+    <td class="punch-time">${escapeHtml(row.afternoonIn)}</td>
+    <td class="punch-time">${escapeHtml(row.afternoonOut)}</td>
     <td>${row.workHours || ""}</td>
     <td>${row.leaveHours || ""}</td>
     <td>${escapeHtml(row.leaveTypes)}</td>
@@ -834,20 +835,22 @@ function printClockTime(date) {
 }
 
 function attendancePrintPunches(date, rows, settings) {
-  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
-  const ordered = [...rows].sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp));
-  const checkIns = ordered.filter((row) => row.type === "checkIn").map((row) => timestampToDate(row.timestamp));
-  const checkOuts = ordered.filter((row) => row.type === "checkOut").map((row) => timestampToDate(row.timestamp));
-  const morningIn = checkIns.find((time) => time < lunchEnd) || checkIns[0] || null;
-  const morningOut = [...checkOuts].reverse().find((time) => time <= lunchEnd) || null;
-  const afternoonIn = checkIns.find((time) => time >= lunchEnd) || null;
-  const afternoonOut = [...checkOuts].reverse().find((time) => time >= lunchStart) || checkOuts[checkOuts.length - 1] || null;
+  const ordered = [...rows]
+    .map((row) => ({ ...row, punchTime: timestampToDate(row.timestamp) }))
+    .filter((row) => row.punchTime && !Number.isNaN(row.punchTime.getTime()))
+    .sort((a, b) => a.punchTime.getTime() - b.punchTime.getTime());
+  const morningRows = ordered.filter((row) => row.punchTime < lunchEnd);
+  const afternoonRows = ordered.filter((row) => row.punchTime >= lunchEnd);
+  const timesByType = (list, type) => list
+    .filter((row) => row.type === type)
+    .map((row) => printTime(row.punchTime))
+    .join("\n");
   return {
-    morningIn: printTime(morningIn),
-    morningOut: printTime(morningOut),
-    afternoonIn: printTime(afternoonIn),
-    afternoonOut: printTime(afternoonOut)
+    morningIn: timesByType(morningRows, "checkIn"),
+    morningOut: timesByType(morningRows, "checkOut"),
+    afternoonIn: timesByType(afternoonRows, "checkIn"),
+    afternoonOut: timesByType(afternoonRows, "checkOut")
   };
 }
 

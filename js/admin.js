@@ -689,7 +689,7 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
   <title>出勤紀錄 - ${escapeHtml(user.name || user.email || "")}</title>
   <style>
     @page { size: A4 landscape; margin: 6mm; }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { margin: 0; background: #fff; color: #000; font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
     .sheet { width: 285mm; min-height: 198mm; margin: 0 auto; padding: 1.5mm 0; }
     .topline { display: grid; grid-template-columns: 1.5fr .8fr 1fr; align-items: end; gap: 5mm; margin-bottom: 2mm; }
@@ -711,14 +711,14 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
     .note { width: 14mm; font-size: 6.5pt; }
     .punch-time { white-space: pre-line; font-size: 6.8pt; line-height: 1.05; }
     .lunch-note { margin-top: 1.5mm; text-align: left; font-size: 8pt; }
-    .rest-day td, .empty-day td { background: #aaa; }
+    .rest-day td, .empty-day td { background: #aaa !important; }
     .empty-day td { color: transparent; }
     .summary-row td { height: 8mm; font-size: 9pt; background: #fff; }
     .print-actions { margin-top: 4mm; text-align: center; }
     .print-actions button { font: 15px "Microsoft JhengHei", sans-serif; padding: 8px 18px; }
     @media print {
       .print-actions { display: none; }
-      .sheet { width: auto; padding: 0; }
+      .sheet { width: 285mm; padding: 0; }
     }
   </style>
 </head>

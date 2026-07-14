@@ -750,7 +750,7 @@ function attendancePrintTable(rows, className, settings) {
       </tr>
       <tr>
         <th>簽到</th><th>簽退</th><th>簽到</th>
-        <th>簽退</th><th>簽到</th><th>簽退</th>
+        <th>簽到</th><th>簽退</th><th>簽退</th>
       </tr>
     </thead>
     <tbody>
@@ -770,8 +770,8 @@ function attendancePrintRow(row) {
     <td class="punch-time">${escapeHtml(row.morningIn1)}</td>
     <td class="punch-time">${escapeHtml(row.morningOut1)}</td>
     <td class="punch-time">${escapeHtml(row.morningIn2)}</td>
-    <td class="punch-time">${escapeHtml(row.afternoonOut1)}</td>
     <td class="punch-time">${escapeHtml(row.afternoonIn1)}</td>
+    <td class="punch-time">${escapeHtml(row.afternoonOut1)}</td>
     <td class="punch-time">${escapeHtml(row.afternoonOut2)}</td>
     <td>${row.workHours || ""}</td>
     <td>${row.leaveHours || ""}</td>

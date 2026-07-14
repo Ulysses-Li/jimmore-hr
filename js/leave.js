@@ -175,7 +175,6 @@ function leavePrintHtml(row) {
     body { font-family: "DFKai-SB", "標楷體", "Microsoft JhengHei", serif; color: #000; margin: 0; background: #fff; }
     .sheet { width: 186mm; margin: 0 auto; page-break-inside: avoid; }
     .form-copy { min-height: 131mm; padding-top: 3mm; }
-    .cut-line { border-top: 1px dashed #8a8a8a; margin: 5mm 0; }
     .company { text-align: center; font-size: 17pt; letter-spacing: .72em; padding-left: .72em; margin-bottom: 2.5mm; }
     .title { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: end; font-size: 15pt; margin-bottom: 5mm; border-bottom: 2px solid #000; padding-bottom: 1.2mm; }
     .title span { text-align: center; border-bottom: 1px solid #000; padding-bottom: 1mm; }
@@ -202,8 +201,6 @@ function leavePrintHtml(row) {
 </head>
 <body>
   <div class="sheet">
-    ${leavePrintFormCopy(row, start, end, fullDays, remainingHours)}
-    <div class="cut-line"></div>
     ${leavePrintFormCopy(row, start, end, fullDays, remainingHours)}
     <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
   </div>

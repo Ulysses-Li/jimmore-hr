@@ -935,50 +935,25 @@ function downloadCompanyAttendanceWorkbook(users, allAttendanceRows, approvedLea
     const attendanceRows = allAttendanceRows.filter((row) => row.userId === user.id && isRowInPeriod(row, period));
     const userApprovedLeaves = approvedLeaveRows.filter((row) => row.userId === user.id);
     const rows = buildAttendanceSummaryRows(attendanceRows, user, settings, userApprovedLeaves, period)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => ({ ...row, email: user.email || "", roleName: roleLabels[user.role] || user.role || "-" }));
-    return { user, rows };
-  }).filter((sheet) => sheet.rows.length);
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const printRows = buildAttendancePrintRows(user, rows, attendanceRows, userApprovedLeaves, settings, period);
+    return { user, summaryRows: rows, printRows };
+  });
 
-  if (!sheets.length) {
-    showToast("這個月份沒有可匯出的出缺勤資料。", "warning");
-    return;
-  }
-
-  const headers = ["日期", "員工", "Email", "角色", "部門", "班別", "簽到", "簽退", "工時", "遲到分鐘", "早退分鐘", "狀態"];
-  const workbook = companyAttendanceWorkbookXml(headers, sheets, period);
+  const workbook = companyAttendanceWorkbookXml(sheets, settings, period);
   const blob = new Blob([workbook], { type: "application/vnd.ms-excel;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${period.year}-${String(period.month).padStart(2, "0")}_全公司出缺勤月報.xls`;
+  link.download = `${period.year}-${String(period.month).padStart(2, "0")}_全公司出勤紀錄.xls`;
   link.click();
   URL.revokeObjectURL(link.href);
 }
 
-function companyAttendanceWorkbookXml(headers, sheets, period) {
+function companyAttendanceWorkbookXml(sheets, settings, period) {
   const usedSheetNames = new Set();
-  const worksheets = sheets.map(({ user, rows }) => {
+  const worksheets = sheets.map(({ user, summaryRows, printRows }) => {
     const name = uniqueExcelSheetName(user.name || user.email || user.id || "員工", usedSheetNames);
-    return excelWorksheetXml(name, [
-      [`${period.year} 年 ${period.month} 月出缺勤月報`],
-      [`員工：${user.name || "-"}`, `部門：${user.department || "-"}`, `角色：${roleLabels[user.role] || user.role || "-"}`],
-      [],
-      headers,
-      ...rows.map((row) => [
-        row.date,
-        row.userName,
-        row.email,
-        row.roleName,
-        row.department,
-        row.shiftName,
-        row.checkInText,
-        row.checkOutText,
-        row.workHours,
-        row.lateMinutes || 0,
-        row.earlyLeaveMinutes || 0,
-        summaryStatusText(row.status)
-      ])
-    ]);
+    return excelAttendancePrintWorksheetXml(name, user, summaryRows, printRows, settings, period);
   }).join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -988,26 +963,119 @@ function companyAttendanceWorkbookXml(headers, sheets, period) {
   xmlns:x="urn:schemas-microsoft-com:office:excel"
   xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
   <Styles>
-    <Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#D9EAFB" ss:Pattern="Solid"/></Style>
-    <Style ss:ID="Title"><Font ss:Bold="1" ss:Size="14"/></Style>
+    <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Microsoft JhengHei" ss:Size="10"/></Style>
+    <Style ss:ID="Title"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Font ss:FontName="Microsoft JhengHei" ss:Bold="1" ss:Size="16"/></Style>
+    <Style ss:ID="Meta"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Font ss:FontName="Microsoft JhengHei" ss:Size="11"/></Style>
+    <Style ss:ID="Header"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Font ss:FontName="Microsoft JhengHei" ss:Bold="1" ss:Size="10"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
+    <Style ss:ID="Cell"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
+    <Style ss:ID="Rest"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Interior ss:Color="#A6A6A6" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
+    <Style ss:ID="Summary"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Font ss:FontName="Microsoft JhengHei" ss:Size="11"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>
   </Styles>
   ${worksheets}
 </Workbook>`;
 }
 
-function excelWorksheetXml(name, rows) {
+function excelAttendancePrintWorksheetXml(name, user, summaryRows, printRows, settings, period) {
+  const leftRows = printRows.slice(0, 16);
+  const rightRows = printRows.slice(16, 32);
+  const totalWorkHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2));
+  const totalLeaveHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.creditedLeaveHours || 0), 0).toFixed(2));
+  const tableRows = leftRows.map((left, index) => excelAttendancePrintRow(left, rightRows[index]));
+  const rows = [
+    [
+      { value: "竣貿國際股份有限公司 出勤紀錄", style: "Title", mergeAcross: 9 },
+      { value: `員工姓名：${user.name || ""}`, style: "Meta", mergeAcross: 3 },
+      { value: `紀錄年月：${period.year - 1911} 年 ${period.month} 月`, style: "Meta", mergeAcross: 9 }
+    ],
+    [],
+    ...excelAttendanceHeaderRows(),
+    ...tableRows,
+    [
+      { value: "出勤總時數統計", style: "Summary", mergeAcross: 5 },
+      { value: `${totalWorkHours} 小時`, style: "Summary", mergeAcross: 5 },
+      { value: "請假總時數統計", style: "Summary", mergeAcross: 5 },
+      { value: `${totalLeaveHours} 小時`, style: "Summary", mergeAcross: 5 }
+    ],
+    [{ value: printLunchSummary(settings), style: "Meta", mergeAcross: 23 }]
+  ];
+
   return `
   <Worksheet ss:Name="${xmlEscape(name)}">
-    <Table>
-      ${rows.map((row, index) => `<Row>${row.map((cell) => excelCellXml(cell, index)).join("")}</Row>`).join("")}
+    <Table ss:ExpandedColumnCount="24">
+      ${excelAttendanceColumnsXml()}
+      ${rows.map((row) => excelRowXml(row)).join("")}
     </Table>
   </Worksheet>`;
 }
 
-function excelCellXml(value, rowIndex) {
+function excelAttendanceColumnsXml() {
+  const widths = [28, 26, 58, 58, 58, 58, 58, 58, 42, 42, 54, 78];
+  return [...widths, ...widths]
+    .map((width) => `<Column ss:Width="${width}"/>`)
+    .join("");
+}
+
+function excelAttendanceHeaderRows() {
+  const side = [
+    { value: "日期", style: "Header", mergeAcross: 1 },
+    { value: "上午出勤", style: "Header", mergeAcross: 2 },
+    { value: "下午出勤", style: "Header", mergeAcross: 2 },
+    { value: "出勤\n時數", style: "Header" },
+    { value: "請假\n時數", style: "Header" },
+    { value: "假\n別", style: "Header" },
+    { value: "備註", style: "Header" }
+  ];
+  const sub = [
+    { value: "", style: "Header" },
+    { value: "", style: "Header" },
+    { value: "簽到", style: "Header" },
+    { value: "簽退", style: "Header" },
+    { value: "簽到", style: "Header" },
+    { value: "簽退", style: "Header" },
+    { value: "簽到", style: "Header" },
+    { value: "簽退", style: "Header" },
+    { value: "", style: "Header" },
+    { value: "", style: "Header" },
+    { value: "", style: "Header" },
+    { value: "", style: "Header" }
+  ];
+  return [[...side, ...side], [...sub, ...sub]];
+}
+
+function excelAttendancePrintRow(left, right) {
+  return [...excelAttendancePrintSide(left), ...excelAttendancePrintSide(right)];
+}
+
+function excelAttendancePrintSide(row) {
+  const style = !row.day || row.isRestDay ? "Rest" : "Cell";
+  if (!row.day) return Array.from({ length: 12 }, () => ({ value: "", style }));
+  return [
+    row.day,
+    row.weekday,
+    row.morningIn1,
+    row.morningOut1,
+    row.morningIn2,
+    row.afternoonOut1,
+    row.afternoonIn1,
+    row.afternoonOut2,
+    row.workHours || "",
+    row.leaveHours || "",
+    row.leaveTypes || "",
+    row.note || ""
+  ].map((value) => ({ value, style }));
+}
+
+function excelRowXml(row) {
+  return `<Row>${row.map((cell) => excelCellXml(cell)).join("")}</Row>`;
+}
+
+function excelCellXml(cell) {
+  const data = typeof cell === "object" && cell !== null ? cell : { value: cell };
+  const value = data.value ?? "";
   const isNumber = typeof value === "number" && Number.isFinite(value);
-  const style = rowIndex === 0 ? ` ss:StyleID="Title"` : (rowIndex === 3 ? ` ss:StyleID="Header"` : "");
-  return `<Cell${style}><Data ss:Type="${isNumber ? "Number" : "String"}">${xmlEscape(value ?? "")}</Data></Cell>`;
+  const style = data.style ? ` ss:StyleID="${data.style}"` : "";
+  const mergeAcross = data.mergeAcross ? ` ss:MergeAcross="${data.mergeAcross}"` : "";
+  return `<Cell${style}${mergeAcross}><Data ss:Type="${isNumber ? "Number" : "String"}">${xmlEscape(value)}</Data></Cell>`;
 }
 
 function uniqueExcelSheetName(value, usedSheetNames) {

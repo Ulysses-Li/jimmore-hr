@@ -797,6 +797,8 @@ function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLea
     const date = `${period.year}-${String(period.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     const summary = summaryByDate.get(date);
     const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
+    const leaveRanges = formatPrintLeaveRanges(dayLeaves, date);
+    const statusNote = summary && summary.status !== "normal" ? summaryStatusText(summary.status) : "";
     rows.push({
       day,
       weekday: weekdayShort(new Date(`${date}T00:00:00`)),
@@ -805,10 +807,30 @@ function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLea
       workHours: summary?.workHours ? Number(summary.workHours).toFixed(2).replace(/\.00$/, "") : "",
       leaveHours: summary?.creditedLeaveHours ? Number(summary.creditedLeaveHours).toFixed(2).replace(/\.00$/, "") : "",
       leaveTypes: Array.from(new Set(dayLeaves.map((item) => leaveTypeLabel(item.leaveType)))).join("、"),
-      note: summary && summary.status !== "normal" ? summaryStatusText(summary.status) : ""
+      note: [leaveRanges, statusNote].filter(Boolean).join(" / ")
     });
   }
   return [...rows.slice(0, 16), ...rows.slice(16, 32)];
+}
+
+function formatPrintLeaveRanges(leaves, date) {
+  const dayStart = new Date(`${date}T00:00:00`);
+  const dayEnd = new Date(`${date}T23:59:59`);
+  return leaves
+    .map((item) => {
+      const start = timestampToDate(item.startTime);
+      const end = timestampToDate(item.endTime);
+      if (!start || !end) return "";
+      const clippedStart = start < dayStart ? dayStart : start;
+      const clippedEnd = end > dayEnd ? dayEnd : end;
+      return `${printClockTime(clippedStart)}-${printClockTime(clippedEnd)}`;
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function printClockTime(date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function attendancePrintPunches(date, rows, settings) {
@@ -1026,8 +1048,8 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
       const checkOutDate = lastOut ? timestampToDate(lastOut.timestamp) : null;
       const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
       const expectedHours = scheduledWorkHours(date, shift, settings);
-      const workHours = calculateReportWorkHours(date, checkInDate, checkOutDate, settings);
       const creditedLeaveHours = calculateReportApprovedLeaveWorkHours(date, dayLeaves, shift, settings);
+      const workHours = calculateReportWorkHours(date, checkInDate, checkOutDate, settings, dayLeaves);
       const lateMinutes = checkInDate ? calculateAdjustedLateMinutes(date, checkInDate, shift, settings, dayLeaves) : 0;
       const earlyLeaveMinutes = checkOutDate ? calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, settings, dayLeaves) : 0;
       const status = resolveReportStatus(firstIn, lastOut, workHours + creditedLeaveHours, lateMinutes, earlyLeaveMinutes, expectedHours);
@@ -1087,12 +1109,15 @@ function resolveReportShift(row, user, settings) {
   };
 }
 
-function calculateReportWorkHours(date, checkInDate, checkOutDate, settings) {
+function calculateReportWorkHours(date, checkInDate, checkOutDate, settings, approvedLeaves = []) {
   if (!checkInDate || !checkOutDate || checkOutDate <= checkInDate) return 0;
   const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
-  const lunchOverlap = Math.max(0, Math.min(checkOutDate, lunchEnd) - Math.max(checkInDate, lunchStart)) / 36e5;
-  return Number(Math.max(0, hoursBetween(checkInDate, checkOutDate) - lunchOverlap).toFixed(2));
+  const lunchMinutes = overlapMinutes(checkInDate, checkOutDate, lunchStart, lunchEnd);
+  const leaveMinutes = approvedLeaves.reduce((sum, item) => {
+    return sum + workMinutesInRange(checkInDate, checkOutDate, timestampToDate(item.startTime), timestampToDate(item.endTime), lunchStart, lunchEnd);
+  }, 0);
+  return Number((Math.max(0, overlapMinutes(checkInDate, checkOutDate, checkInDate, checkOutDate) - lunchMinutes - leaveMinutes) / 60).toFixed(2));
 }
 
 function calculateAdjustedLateMinutes(date, checkInDate, shift, settings, approvedLeaves) {
@@ -1115,11 +1140,7 @@ function calculateReportApprovedLeaveWorkHours(date, approvedLeaves, shift, sett
   const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
   const minutes = approvedLeaves.reduce((sum, item) => {
-    const leaveStart = timestampToDate(item.startTime);
-    const leaveEnd = timestampToDate(item.endTime);
-    const workMinutes = overlapMinutes(workStart, workEnd, leaveStart, leaveEnd);
-    const lunchMinutes = overlapMinutes(lunchStart, lunchEnd, leaveStart, leaveEnd);
-    return sum + Math.max(0, workMinutes - lunchMinutes);
+    return sum + workMinutesInRange(workStart, workEnd, timestampToDate(item.startTime), timestampToDate(item.endTime), lunchStart, lunchEnd);
   }, 0);
   return minutes / 60;
 }
@@ -1150,6 +1171,18 @@ function leaveOverlapMinutes(start, end, approvedLeaves) {
   return approvedLeaves.reduce((sum, item) => {
     return sum + overlapMinutes(start, end, timestampToDate(item.startTime), timestampToDate(item.endTime));
   }, 0);
+}
+
+function workMinutesInRange(start, end, blockStart, blockEnd, lunchStart, lunchEnd) {
+  if (!start || !end || !blockStart || !blockEnd || end <= start || blockEnd <= blockStart) return 0;
+  if ([start, end, blockStart, blockEnd, lunchStart, lunchEnd].some((date) => Number.isNaN(date.getTime()))) return 0;
+  const minutes = overlapMinutes(start, end, blockStart, blockEnd);
+  const lunchRangeStart = new Date(Math.max(start.getTime(), lunchStart.getTime()));
+  const lunchRangeEnd = new Date(Math.min(end.getTime(), lunchEnd.getTime()));
+  const lunchMinutes = lunchRangeEnd > lunchRangeStart
+    ? overlapMinutes(lunchRangeStart, lunchRangeEnd, blockStart, blockEnd)
+    : 0;
+  return Math.max(0, minutes - lunchMinutes);
 }
 
 function overlapMinutes(start, end, blockStart, blockEnd) {

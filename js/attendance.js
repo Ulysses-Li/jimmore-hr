@@ -171,8 +171,15 @@ async function updateDaily(now) {
   const checkInTime = toDate(firstIn.timestamp);
   const checkOutTime = toDate(lastOut.timestamp);
   const lunchHours = overlapHours(checkInTime, checkOutTime, timeToDate(date, settings.lunchStart), timeToDate(date, settings.lunchEnd));
-  const total = Math.max(0, hoursBetween(checkInTime, checkOutTime) - lunchHours);
   const creditedLeaveHours = calculateApprovedLeaveWorkHours(date, approvedLeaves, shift);
+  const leaveMinutes = calculateApprovedLeaveWorkMinutesInRange(
+    checkInTime,
+    checkOutTime,
+    approvedLeaves,
+    timeToDate(date, settings.lunchStart),
+    timeToDate(date, settings.lunchEnd)
+  );
+  const total = Math.max(0, hoursBetween(checkInTime, checkOutTime) - lunchHours - leaveMinutes / 60);
   const expectedHours = scheduledWorkHours(date, shift);
   const reached = total + creditedLeaveHours >= expectedHours;
   const firstInStatus = resolveStatus("checkIn", checkInTime, approvedLeaves, shift);
@@ -269,14 +276,27 @@ function calculateApprovedLeaveWorkHours(date, approvedLeaves, shift) {
   const workEnd = timeToDate(date, effectiveWorkEndTime(date, shift));
   const lunchStart = timeToDate(date, settings.lunchStart);
   const lunchEnd = timeToDate(date, settings.lunchEnd);
-  const minutes = approvedLeaves.reduce((sum, item) => {
-    const leaveStart = toDate(item.startTime);
-    const leaveEnd = toDate(item.endTime);
-    const leaveWorkMinutes = overlapMinutes(workStart, workEnd, leaveStart, leaveEnd);
-    const lunchMinutes = overlapMinutes(lunchStart, lunchEnd, leaveStart, leaveEnd);
-    return sum + Math.max(0, leaveWorkMinutes - lunchMinutes);
-  }, 0);
+  const minutes = calculateApprovedLeaveWorkMinutesInRange(workStart, workEnd, approvedLeaves, lunchStart, lunchEnd);
   return minutes / 60;
+}
+
+function calculateApprovedLeaveWorkMinutesInRange(start, end, approvedLeaves, lunchStart, lunchEnd) {
+  if (!start || !end || end <= start) return 0;
+  return approvedLeaves.reduce((sum, item) => {
+    return sum + workMinutesInRange(start, end, toDate(item.startTime), toDate(item.endTime), lunchStart, lunchEnd);
+  }, 0);
+}
+
+function workMinutesInRange(start, end, blockStart, blockEnd, lunchStart, lunchEnd) {
+  if (!start || !end || !blockStart || !blockEnd || end <= start || blockEnd <= blockStart) return 0;
+  if ([start, end, blockStart, blockEnd, lunchStart, lunchEnd].some((date) => Number.isNaN(date.getTime()))) return 0;
+  const minutes = overlapMinutes(start, end, blockStart, blockEnd);
+  const lunchRangeStart = new Date(Math.max(start.getTime(), lunchStart.getTime()));
+  const lunchRangeEnd = new Date(Math.min(end.getTime(), lunchEnd.getTime()));
+  const lunchMinutes = lunchRangeEnd > lunchRangeStart
+    ? overlapMinutes(lunchRangeStart, lunchRangeEnd, blockStart, blockEnd)
+    : 0;
+  return Math.max(0, minutes - lunchMinutes);
 }
 
 function effectiveWorkEndTime(date, shift) {

@@ -628,9 +628,17 @@ function isLeaveInPeriod(row, period) {
 }
 
 function buildMonthlyAttendanceStats(summaryRows) {
+  const workHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2));
+  const leaveHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.creditedLeaveHours || 0), 0).toFixed(2));
+  const expectedHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.expectedHours || 0), 0).toFixed(2));
+  const creditedHours = Number((workHours + leaveHours).toFixed(2));
   return {
     days: summaryRows.length,
-    workHours: Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2)),
+    expectedHours,
+    workHours,
+    leaveHours,
+    creditedHours,
+    shortageHours: Number(Math.max(0, expectedHours - creditedHours).toFixed(2)),
     lateCount: summaryRows.filter((row) => row.lateMinutes > 0).length,
     lateMinutes: summaryRows.reduce((sum, row) => sum + Number(row.lateMinutes || 0), 0),
     earlyLeaveCount: summaryRows.filter((row) => row.earlyLeaveMinutes > 0).length,
@@ -642,16 +650,20 @@ function buildMonthlyAttendanceStats(summaryRows) {
 function monthlyStatsHtml(stats) {
   if (!stats) {
     return `
-      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">出勤日數</div><div class="fw-bold">-</div></div></div>
-      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">總工時</div><div class="fw-bold">-</div></div></div>
-      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">遲到</div><div class="fw-bold">-</div></div></div>
-      <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">早退 / 異常</div><div class="fw-bold">-</div></div></div>`;
+      <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">出勤日數</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">應出勤</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">實際出勤</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">核准請假</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">認列合計</div><div class="fw-bold">-</div></div></div>
+      <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">異常</div><div class="fw-bold">-</div></div></div>`;
   }
   return `
-    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">出勤日數</div><div class="fw-bold">${stats.days} 天</div></div></div>
-    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">總工時</div><div class="fw-bold">${stats.workHours} 小時</div></div></div>
-    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">遲到</div><div class="fw-bold">${stats.lateCount} 次 / ${stats.lateMinutes} 分</div></div></div>
-    <div class="col-md-3"><div class="border rounded p-2"><div class="small muted">早退 / 異常</div><div class="fw-bold">${stats.earlyLeaveCount} 次 / ${stats.abnormalCount} 天</div></div></div>`;
+    <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">出勤日數</div><div class="fw-bold">${stats.days} 天</div></div></div>
+    <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">應出勤</div><div class="fw-bold">${stats.expectedHours} 小時</div></div></div>
+    <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">實際出勤</div><div class="fw-bold">${stats.workHours} 小時</div></div></div>
+    <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">核准請假</div><div class="fw-bold">${stats.leaveHours} 小時</div></div></div>
+    <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">認列合計</div><div class="fw-bold">${stats.creditedHours} 小時</div><div class="small muted">不足 ${stats.shortageHours} 小時</div></div></div>
+    <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">異常</div><div class="fw-bold">${stats.abnormalCount} 天</div><div class="small muted">遲到 ${stats.lateCount} 次 / 早退 ${stats.earlyLeaveCount} 次</div></div></div>`;
 }
 
 function openAttendancePrintView(user, summaryRows, attendanceRows, approvedLeaves, settings, period) {
@@ -1070,7 +1082,7 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
       const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
       const expectedHours = scheduledWorkHours(date, shift, settings);
       const creditedLeaveHours = calculateReportApprovedLeaveWorkHours(date, dayLeaves, shift, settings);
-      const workHours = calculateReportWorkHours(date, checkInDate, checkOutDate, settings, dayLeaves);
+      const workHours = calculateReportWorkHours(date, ordered, settings, dayLeaves);
       const lateMinutes = checkInDate ? calculateAdjustedLateMinutes(date, checkInDate, shift, settings, dayLeaves) : 0;
       const earlyLeaveMinutes = checkOutDate ? calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, settings, dayLeaves) : 0;
       const status = resolveReportStatus(firstIn, lastOut, workHours + creditedLeaveHours, lateMinutes, earlyLeaveMinutes, expectedHours);
@@ -1130,15 +1142,36 @@ function resolveReportShift(row, user, settings) {
   };
 }
 
-function calculateReportWorkHours(date, checkInDate, checkOutDate, settings, approvedLeaves = []) {
-  if (!checkInDate || !checkOutDate || checkOutDate <= checkInDate) return 0;
+function calculateReportWorkHours(date, orderedRows, settings, approvedLeaves = []) {
   const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
-  const lunchMinutes = overlapMinutes(checkInDate, checkOutDate, lunchStart, lunchEnd);
-  const leaveMinutes = approvedLeaves.reduce((sum, item) => {
-    return sum + workMinutesInRange(checkInDate, checkOutDate, timestampToDate(item.startTime), timestampToDate(item.endTime), lunchStart, lunchEnd);
+  const pairedRanges = attendanceWorkRanges(orderedRows);
+  const minutes = pairedRanges.reduce((sum, range) => {
+    const lunchMinutes = overlapMinutes(range.start, range.end, lunchStart, lunchEnd);
+    const leaveMinutes = approvedLeaves.reduce((leaveSum, item) => {
+      return leaveSum + workMinutesInRange(range.start, range.end, timestampToDate(item.startTime), timestampToDate(item.endTime), lunchStart, lunchEnd);
+    }, 0);
+    return sum + Math.max(0, overlapMinutes(range.start, range.end, range.start, range.end) - lunchMinutes - leaveMinutes);
   }, 0);
-  return Number((Math.max(0, overlapMinutes(checkInDate, checkOutDate, checkInDate, checkOutDate) - lunchMinutes - leaveMinutes) / 60).toFixed(2));
+  return Number((minutes / 60).toFixed(2));
+}
+
+function attendanceWorkRanges(orderedRows) {
+  const ranges = [];
+  let activeIn = null;
+  orderedRows.forEach((row) => {
+    const at = timestampToDate(row.timestamp);
+    if (!at || Number.isNaN(at.getTime())) return;
+    if (row.type === "checkIn") {
+      if (!activeIn) activeIn = at;
+      return;
+    }
+    if (row.type === "checkOut" && activeIn && at > activeIn) {
+      ranges.push({ start: activeIn, end: at });
+      activeIn = null;
+    }
+  });
+  return ranges;
 }
 
 function calculateAdjustedLateMinutes(date, checkInDate, shift, settings, approvedLeaves) {

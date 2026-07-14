@@ -169,16 +169,10 @@ async function updateDaily(now) {
 
   const checkInTime = toDate(firstIn.timestamp);
   const checkOutTime = toDate(lastOut.timestamp);
-  const lunchHours = overlapHours(checkInTime, checkOutTime, timeToDate(date, settings.lunchStart), timeToDate(date, settings.lunchEnd));
+  const lunchStart = timeToDate(date, settings.lunchStart);
+  const lunchEnd = timeToDate(date, settings.lunchEnd);
   const creditedLeaveHours = calculateApprovedLeaveWorkHours(date, approvedLeaves, shift);
-  const leaveMinutes = calculateApprovedLeaveWorkMinutesInRange(
-    checkInTime,
-    checkOutTime,
-    approvedLeaves,
-    timeToDate(date, settings.lunchStart),
-    timeToDate(date, settings.lunchEnd)
-  );
-  const total = Math.max(0, hoursBetween(checkInTime, checkOutTime) - lunchHours - leaveMinutes / 60);
+  const total = calculateAttendanceWorkHours(records, approvedLeaves, lunchStart, lunchEnd);
   const expectedHours = scheduledWorkHours(date, shift);
   const reached = total + creditedLeaveHours >= expectedHours;
   const firstInStatus = resolveStatus("checkIn", checkInTime, approvedLeaves, shift);
@@ -204,11 +198,51 @@ async function updateDaily(now) {
     checkOutTime: lastOut.timestamp,
     totalWorkHours: Number(total.toFixed(2)),
     creditedLeaveHours: Number(creditedLeaveHours.toFixed(2)),
-    lunchDeductHours: Number(lunchHours.toFixed(2)),
+    lunchDeductHours: Number(calculateAttendanceLunchHours(records, lunchStart, lunchEnd).toFixed(2)),
     status: dailyStatus,
     isEightHoursReached: reached,
     updatedAt: serverTimestamp()
   }, { merge: true });
+}
+
+function calculateAttendanceWorkHours(records, approvedLeaves, lunchStart, lunchEnd) {
+  const minutes = attendanceWorkRanges(records).reduce((sum, range) => {
+    const lunchMinutes = overlapMinutes(range.start, range.end, lunchStart, lunchEnd);
+    const leaveMinutes = calculateApprovedLeaveWorkMinutesInRange(
+      range.start,
+      range.end,
+      approvedLeaves,
+      lunchStart,
+      lunchEnd
+    );
+    return sum + Math.max(0, overlapMinutes(range.start, range.end, range.start, range.end) - lunchMinutes - leaveMinutes);
+  }, 0);
+  return minutes / 60;
+}
+
+function calculateAttendanceLunchHours(records, lunchStart, lunchEnd) {
+  const minutes = attendanceWorkRanges(records).reduce((sum, range) => {
+    return sum + overlapMinutes(range.start, range.end, lunchStart, lunchEnd);
+  }, 0);
+  return minutes / 60;
+}
+
+function attendanceWorkRanges(records) {
+  const ranges = [];
+  let activeIn = null;
+  records.forEach((row) => {
+    const at = toDate(row.timestamp);
+    if (!at || Number.isNaN(at.getTime())) return;
+    if (row.type === "checkIn") {
+      if (!activeIn) activeIn = at;
+      return;
+    }
+    if (row.type === "checkOut" && activeIn && at > activeIn) {
+      ranges.push({ start: activeIn, end: at });
+      activeIn = null;
+    }
+  });
+  return ranges;
 }
 
 async function render() {

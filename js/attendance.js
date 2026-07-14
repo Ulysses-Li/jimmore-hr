@@ -30,6 +30,7 @@ bindLogout();
 const settings = await getWorkSettings();
 const workShifts = normalizeWorkShifts(settings);
 const assignedShift = findShift(profile.defaultShiftId);
+const PUNCH_WINDOW_MINUTES = 13;
 
 qs("#pageContent").innerHTML = `
   <div class="row g-3">
@@ -104,6 +105,8 @@ async function punch(type) {
   setPunching(true, type);
   try {
     const at = new Date();
+    const shift = getAssignedShift();
+    assertPunchWindowOpen(at, shift);
     const todayRecords = await loadTodayRecords(todayKey(at));
     const lastRecord = todayRecords.at(-1);
     if (type === "checkIn" && lastRecord?.type === "checkIn") {
@@ -117,7 +120,6 @@ async function punch(type) {
     }
 
     const pos = await getPosition();
-    const shift = getAssignedShift();
     const approvedLeaves = await loadApprovedLeavesForDate(todayKey(at));
     const status = resolveStatus(type, at, approvedLeaves);
     const record = {
@@ -403,6 +405,28 @@ function getAssignedShift() {
   return shift;
 }
 
+function attendancePunchWindow(date, shift) {
+  const dateKey = typeof date === "string" ? date : todayKey(date);
+  const openAt = addMinutes(timeToDate(dateKey, shift.workStart || settings.workStart || "09:00"), -PUNCH_WINDOW_MINUTES);
+  const closeAt = addMinutes(timeToDate(dateKey, effectiveWorkEndTime(dateKey, shift)), PUNCH_WINDOW_MINUTES);
+  return { openAt, closeAt };
+}
+
+function addMinutes(date, minutes) {
+  return new Date(date.getTime() + minutes * 60000);
+}
+
+function assertPunchWindowOpen(at, shift) {
+  const window = attendancePunchWindow(at, shift);
+  if (at >= window.openAt && at <= window.closeAt) return;
+  throw new Error(`目前非打卡開放時間，開放時間為 ${fmtTime(window.openAt)} - ${fmtTime(window.closeAt)}。`);
+}
+
+function punchWindowText(date, shift) {
+  const window = attendancePunchWindow(date, shift);
+  return `${fmtTime(window.openAt)} - ${fmtTime(window.closeAt)}`;
+}
+
 function updateShiftSummary(firstIn) {
   const selected = firstIn
     ? findShift(firstIn.shiftId) || {
@@ -434,9 +458,19 @@ function updateActionState(rows) {
     return;
   }
 
+  const now = new Date();
+  const todayWindow = attendancePunchWindow(now, assignedShift);
+  if (now < todayWindow.openAt || now > todayWindow.closeAt) {
+    hint.className = "alert alert-warning py-2 mb-3";
+    hint.textContent = `目前非打卡開放時間。今日開放時間為 ${punchWindowText(now, assignedShift)}。`;
+    checkInBtn.disabled = true;
+    checkOutBtn.disabled = true;
+    return;
+  }
+
   if (!lastRecord) {
     hint.className = "alert alert-info py-2 mb-3";
-    hint.textContent = "今日尚未簽到。請先按「上班簽到」。";
+    hint.textContent = `今日尚未簽到。打卡開放時間為 ${punchWindowText(now, assignedShift)}，請先按「上班簽到」。`;
     checkInBtn.disabled = false;
     checkOutBtn.disabled = true;
     return;

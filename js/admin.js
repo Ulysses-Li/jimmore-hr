@@ -676,32 +676,33 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
   <meta charset="utf-8">
   <title>出勤紀錄 - ${escapeHtml(user.name || user.email || "")}</title>
   <style>
-    @page { size: A4 landscape; margin: 9mm; }
+    @page { size: A4 landscape; margin: 6mm; }
     * { box-sizing: border-box; }
     body { margin: 0; background: #fff; color: #000; font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
-    .sheet { width: 279mm; margin: 0 auto; padding: 2mm 0; }
-    .topline { display: grid; grid-template-columns: 1.4fr .8fr 1fr; align-items: end; gap: 8mm; margin-bottom: 3mm; }
-    .company { text-align: center; font-weight: 700; font-size: 17pt; letter-spacing: .08em; }
-    .meta { font-size: 13pt; white-space: nowrap; }
-    .meta strong { display: inline-block; min-width: 26mm; border-bottom: 1px solid #000; text-align: center; padding: 0 2mm; }
-    .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 2px solid #000; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10.5pt; line-height: 1.15; }
-    .left-table { border-right: 2px solid #000; }
-    th, td { border: 1px solid #000; text-align: center; vertical-align: middle; padding: 1mm .8mm; height: 9.5mm; }
+    .sheet { width: 285mm; min-height: 198mm; margin: 0 auto; padding: 1.5mm 0; }
+    .topline { display: grid; grid-template-columns: 1.5fr .8fr 1fr; align-items: end; gap: 5mm; margin-bottom: 2mm; }
+    .company { text-align: center; font-weight: 700; font-size: 14pt; letter-spacing: .06em; }
+    .meta { font-size: 10pt; white-space: nowrap; }
+    .meta strong { display: inline-block; min-width: 19mm; border-bottom: 1px solid #000; text-align: center; padding: 0 1mm; }
+    .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1.5px solid #000; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.4pt; line-height: 1.05; }
+    .left-table { border-right: 1.5px solid #000; }
+    th, td { border: 1px solid #000; text-align: center; vertical-align: middle; padding: .35mm .25mm; height: 7.8mm; overflow: hidden; }
     th { font-weight: 700; }
-    .day { width: 7mm; font-size: 13pt; }
-    .week { width: 7mm; font-size: 11pt; }
-    .time { width: 17mm; }
+    thead th { height: 6.4mm; }
+    .day { width: 5.5mm; font-size: 8pt; }
+    .week { width: 5mm; font-size: 8pt; }
+    .time { width: 12.5mm; }
     .rest { width: 8mm; }
-    .hours { width: 10mm; }
-    .leave-hours { width: 11mm; }
-    .leave-type { width: 13mm; }
-    .note { width: 27mm; }
-    .rest-label { writing-mode: vertical-rl; letter-spacing: .18em; font-size: 12pt; }
+    .hours { width: 7.5mm; }
+    .leave-hours { width: 7.5mm; }
+    .leave-type { width: 10mm; }
+    .note { width: 21mm; }
+    .rest-label { display: block; font-size: 6.5pt; line-height: 1.05; white-space: pre-line; }
     .rest-day td:not(.rest-cell), .empty-day td { background: #aaa; }
     .empty-day td { color: transparent; }
-    .summary-row td { height: 11mm; font-size: 12pt; background: #fff; }
-    .print-actions { margin-top: 5mm; text-align: center; }
+    .summary-row td { height: 8mm; font-size: 9pt; background: #fff; }
+    .print-actions { margin-top: 4mm; text-align: center; }
     .print-actions button { font: 15px "Microsoft JhengHei", sans-serif; padding: 8px 18px; }
     @media print {
       .print-actions { display: none; }
@@ -835,7 +836,7 @@ function printTime(value) {
 function printLunchLabel(settings) {
   const start = settings.lunchStart || "12:00";
   const end = settings.lunchEnd || "13:00";
-  return `${start}-${end}`;
+  return `${start}\n${end}`;
 }
 
 function weekdayShort(date) {

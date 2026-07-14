@@ -750,7 +750,7 @@ function attendancePrintTable(rows, className, settings) {
       </tr>
       <tr>
         <th>簽到</th><th>簽退</th><th>簽到</th>
-        <th>簽到</th><th>簽退</th><th>簽退</th>
+        <th>簽退</th><th>簽到</th><th>簽退</th>
       </tr>
     </thead>
     <tbody>
@@ -770,8 +770,8 @@ function attendancePrintRow(row) {
     <td class="punch-time">${escapeHtml(row.morningIn1)}</td>
     <td class="punch-time">${escapeHtml(row.morningOut1)}</td>
     <td class="punch-time">${escapeHtml(row.morningIn2)}</td>
-    <td class="punch-time">${escapeHtml(row.afternoonIn1)}</td>
     <td class="punch-time">${escapeHtml(row.afternoonOut1)}</td>
+    <td class="punch-time">${escapeHtml(row.afternoonIn1)}</td>
     <td class="punch-time">${escapeHtml(row.afternoonOut2)}</td>
     <td>${row.workHours || ""}</td>
     <td>${row.leaveHours || ""}</td>
@@ -851,13 +851,18 @@ function attendancePrintPunches(date, rows, settings) {
     if (index === 0) return times[0] || "";
     return times.slice(index).join("\n");
   };
+  const afternoonCheckOuts = afternoonRows
+    .filter((row) => row.type === "checkOut")
+    .map((row) => printTime(row.punchTime));
+  const finalAfternoonOut = afternoonCheckOuts.at(-1) || "";
+  const midAfternoonOuts = afternoonCheckOuts.length > 1 ? afternoonCheckOuts.slice(0, -1).join("\n") : "";
   return {
     morningIn1: timesByType(morningRows, "checkIn", 0),
     morningOut1: timesByType(morningRows, "checkOut", 0),
     morningIn2: timesByType(morningRows, "checkIn", 1),
-    afternoonOut1: timesByType(afternoonRows, "checkOut", 0),
+    afternoonOut1: midAfternoonOuts,
     afternoonIn1: timesByType(afternoonRows, "checkIn", 0),
-    afternoonOut2: timesByType(afternoonRows, "checkOut", 1)
+    afternoonOut2: finalAfternoonOut
   };
 }
 

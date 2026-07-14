@@ -692,15 +692,14 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
     thead th { height: 6.4mm; }
     .day { width: 5.5mm; font-size: 8pt; }
     .week { width: 5mm; font-size: 8pt; }
-    .time { width: 12.5mm; }
-    .rest { width: 8mm; }
+    .time { width: 10.2mm; }
     .hours { width: 7.5mm; }
     .leave-hours { width: 7.5mm; }
     .leave-type { width: 10mm; }
-    .note { width: 21mm; }
+    .note { width: 14mm; font-size: 6.5pt; }
     .punch-time { white-space: pre-line; font-size: 6.8pt; line-height: 1.05; }
-    .rest-label { display: block; font-size: 6.5pt; line-height: 1.05; white-space: pre-line; }
-    .rest-day td:not(.rest-cell), .empty-day td { background: #aaa; }
+    .lunch-note { margin-top: 1.5mm; text-align: left; font-size: 8pt; }
+    .rest-day td, .empty-day td { background: #aaa; }
     .empty-day td { color: transparent; }
     .summary-row td { height: 8mm; font-size: 9pt; background: #fff; }
     .print-actions { margin-top: 4mm; text-align: center; }
@@ -724,6 +723,7 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
       <table class="left-table"><tr class="summary-row"><td>出勤總時數統計</td><td>${totalWorkHours} 小時</td></tr></table>
       <table><tr class="summary-row"><td>請假總時數統計</td><td>${totalLeaveHours} 小時</td></tr></table>
     </div>
+    <div class="lunch-note">${escapeHtml(printLunchSummary(settings))}</div>
     <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
   </div>
 </body>
@@ -734,22 +734,23 @@ function attendancePrintTable(rows, className, settings) {
   return `<table class="${className}">
     <colgroup>
       <col class="day"><col class="week">
-      <col class="time"><col class="time"><col class="rest">
-      <col class="time"><col class="time"><col class="hours"><col class="leave-hours"><col class="leave-type"><col class="note">
+      <col class="time"><col class="time"><col class="time">
+      <col class="time"><col class="time"><col class="time">
+      <col class="hours"><col class="leave-hours"><col class="leave-type"><col class="note">
     </colgroup>
     <thead>
       <tr>
         <th colspan="2" rowspan="2">日期</th>
-        <th colspan="2">上午出勤</th>
-        <th rowspan="2">休息<br>時間</th>
-        <th colspan="2">下午出勤</th>
+        <th colspan="3">上午出勤</th>
+        <th colspan="3">下午出勤</th>
         <th rowspan="2">出勤<br>時數</th>
         <th rowspan="2">請假<br>時數</th>
         <th rowspan="2">假<br>別</th>
         <th rowspan="2">備註</th>
       </tr>
       <tr>
-        <th>簽到時間</th><th>簽退時間</th><th>簽到時間</th><th>簽退時間</th>
+        <th>簽到</th><th>簽退</th><th>簽到</th>
+        <th>簽退</th><th>簽到</th><th>簽退</th>
       </tr>
     </thead>
     <tbody>
@@ -758,19 +759,20 @@ function attendancePrintTable(rows, className, settings) {
   </table>`;
 }
 
-function attendancePrintRow(row, settings) {
+function attendancePrintRow(row) {
   if (!row.day) {
-    return `<tr class="empty-day"><td></td><td></td><td></td><td></td><td class="rest-cell"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+    return `<tr class="empty-day"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
   }
   const className = row.isRestDay ? "rest-day" : "";
   return `<tr class="${className}">
     <td>${row.day}</td>
     <td>${row.weekday}</td>
-    <td class="punch-time">${escapeHtml(row.morningIn)}</td>
-    <td class="punch-time">${escapeHtml(row.morningOut)}</td>
-    <td class="rest-cell"><span class="rest-label">${escapeHtml(printLunchLabel(settings))}</span></td>
-    <td class="punch-time">${escapeHtml(row.afternoonIn)}</td>
-    <td class="punch-time">${escapeHtml(row.afternoonOut)}</td>
+    <td class="punch-time">${escapeHtml(row.morningIn1)}</td>
+    <td class="punch-time">${escapeHtml(row.morningOut1)}</td>
+    <td class="punch-time">${escapeHtml(row.morningIn2)}</td>
+    <td class="punch-time">${escapeHtml(row.afternoonOut1)}</td>
+    <td class="punch-time">${escapeHtml(row.afternoonIn1)}</td>
+    <td class="punch-time">${escapeHtml(row.afternoonOut2)}</td>
     <td>${row.workHours || ""}</td>
     <td>${row.leaveHours || ""}</td>
     <td>${escapeHtml(row.leaveTypes)}</td>
@@ -842,15 +844,20 @@ function attendancePrintPunches(date, rows, settings) {
     .sort((a, b) => a.punchTime.getTime() - b.punchTime.getTime());
   const morningRows = ordered.filter((row) => row.punchTime < lunchEnd);
   const afternoonRows = ordered.filter((row) => row.punchTime >= lunchEnd);
-  const timesByType = (list, type) => list
-    .filter((row) => row.type === type)
-    .map((row) => printTime(row.punchTime))
-    .join("\n");
+  const timesByType = (list, type, index) => {
+    const times = list
+      .filter((row) => row.type === type)
+      .map((row) => printTime(row.punchTime));
+    if (index === 0) return times[0] || "";
+    return times.slice(index).join("\n");
+  };
   return {
-    morningIn: timesByType(morningRows, "checkIn"),
-    morningOut: timesByType(morningRows, "checkOut"),
-    afternoonIn: timesByType(afternoonRows, "checkIn"),
-    afternoonOut: timesByType(afternoonRows, "checkOut")
+    morningIn1: timesByType(morningRows, "checkIn", 0),
+    morningOut1: timesByType(morningRows, "checkOut", 0),
+    morningIn2: timesByType(morningRows, "checkIn", 1),
+    afternoonOut1: timesByType(afternoonRows, "checkOut", 0),
+    afternoonIn1: timesByType(afternoonRows, "checkIn", 0),
+    afternoonOut2: timesByType(afternoonRows, "checkOut", 1)
   };
 }
 
@@ -862,6 +869,12 @@ function printLunchLabel(settings) {
   const start = settings.lunchStart || "12:00";
   const end = settings.lunchEnd || "13:00";
   return `${start}\n${end}`;
+}
+
+function printLunchSummary(settings) {
+  const start = settings.lunchStart || "12:00";
+  const end = settings.lunchEnd || "13:00";
+  return `休息時間：${start} - ${end}`;
 }
 
 function weekdayShort(date) {

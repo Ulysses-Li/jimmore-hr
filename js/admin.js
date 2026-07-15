@@ -555,7 +555,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
   printButton.disabled = !summaryRows.length;
   printButton.onclick = () => openAttendancePrintView(user, summaryRows, attendanceRows, userApprovedLeaves, settings, period);
   correctionPrintButton.disabled = !summaryRows.length;
-  correctionPrintButton.onclick = () => openAttendancePrintView(user, summaryRows, attendanceRows, userApprovedLeaves, settings, period);
+  correctionPrintButton.onclick = () => openAttendancePrintView(user, summaryRows, attendanceRows, userApprovedLeaves, settings, period, true);
 
   summaryBody.innerHTML = summaryRows.length ? summaryRows.map((row) => {
     return `<tr>
@@ -672,21 +672,23 @@ function monthlyStatsHtml(stats) {
     <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">異常</div><div class="fw-bold">${stats.abnormalCount} 天</div><div class="small muted">遲到 ${stats.lateCount} 次 / 早退 ${stats.earlyLeaveCount} 次</div></div></div>`;
 }
 
-function openAttendancePrintView(user, summaryRows, attendanceRows, approvedLeaves, settings, period) {
+function openAttendancePrintView(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours = false) {
   const popup = window.open("", "_blank", "width=1200,height=820");
   if (!popup) {
     showToast("瀏覽器封鎖列印視窗，請允許彈出視窗後再試一次。", "warning");
     return;
   }
   popup.document.open();
-  popup.document.write(attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, settings, period));
+  popup.document.write(attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours));
   popup.document.close();
   popup.focus();
 }
 
-function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, settings, period) {
-  const rows = buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLeaves, settings, period);
-  const totalWorkHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2));
+function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours = false) {
+  const rows = buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours);
+  const totalWorkHours = correctDailyHours
+    ? Number(rows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2))
+    : Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2));
   const totalLeaveHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.creditedLeaveHours || 0), 0).toFixed(2));
   return `<!doctype html>
 <html lang="zh-Hant">
@@ -798,7 +800,7 @@ function attendancePrintRow(row) {
   </tr>`;
 }
 
-function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLeaves, settings, period) {
+function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours = false) {
   const summaryByDate = new Map(summaryRows.map((row) => [row.date, row]));
   const rowsByDate = new Map();
   attendanceRows.forEach((row) => {
@@ -820,13 +822,18 @@ function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLea
     const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
     const leaveRanges = formatPrintLeaveRanges(dayLeaves, date);
     const statusNote = summary && summary.status !== "normal" ? summaryStatusText(summary.status) : "";
+    const leaveHours = Number(summary?.creditedLeaveHours || 0);
+    const originalWorkHours = Number(summary?.workHours || 0);
+    const workHours = correctDailyHours
+      ? Math.min(originalWorkHours, Math.max(0, Number(settings.standardHours || 8) - leaveHours))
+      : originalWorkHours;
     rows.push({
       day,
       weekday: weekdayShort(new Date(`${date}T00:00:00`)),
       isRestDay: isCompanyRestDay(date, settings),
       ...attendancePrintPunches(date, rowsByDate.get(date) || [], settings),
-      workHours: summary?.workHours ? Number(summary.workHours).toFixed(2).replace(/\.00$/, "") : "",
-      leaveHours: summary?.creditedLeaveHours ? Number(summary.creditedLeaveHours).toFixed(2).replace(/\.00$/, "") : "",
+      workHours: workHours ? workHours.toFixed(2).replace(/\.00$/, "") : "",
+      leaveHours: leaveHours ? leaveHours.toFixed(2).replace(/\.00$/, "") : "",
       leaveTypes: Array.from(new Set(dayLeaves.map((item) => leaveTypeLabel(item.leaveType)))).join("、"),
       note: [leaveRanges, statusNote].filter(Boolean).join(" / ")
     });

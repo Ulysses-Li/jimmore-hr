@@ -365,6 +365,7 @@ async function renderAttendanceReport() {
         <div class="d-flex align-items-center gap-2">
           <span class="badge text-bg-secondary" id="attendanceSummaryBadge">尚未選擇員工</span>
           <button class="btn btn-sm btn-outline-secondary" id="attendancePrintSheet" disabled>列印出勤表</button>
+          <button class="btn btn-sm btn-outline-secondary" id="attendancePrintCorrectionSheet" disabled>出勤表改正</button>
           <button class="btn btn-sm btn-outline-primary" id="attendanceExportCsv" disabled>下載 CSV</button>
         </div>
       </div>
@@ -509,6 +510,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
   const statsHost = qs("#attendanceMonthlyStats");
   const exportButton = qs("#attendanceExportCsv");
   const printButton = qs("#attendancePrintSheet");
+  const correctionPrintButton = qs("#attendancePrintCorrectionSheet");
 
   if (!userId) {
     summaryBadge.className = "badge text-bg-secondary";
@@ -524,6 +526,8 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
     exportButton.onclick = null;
     printButton.disabled = true;
     printButton.onclick = null;
+    correctionPrintButton.disabled = true;
+    correctionPrintButton.onclick = null;
     summaryBody.innerHTML = `<tr><td colspan="11" class="muted">請先選擇員工</td></tr>`;
     leaveBody.innerHTML = `<tr><td colspan="5" class="muted">請先選擇員工</td></tr>`;
     detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
@@ -550,6 +554,8 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
   exportButton.onclick = () => downloadAttendanceCsv(summaryRows, user, period);
   printButton.disabled = !summaryRows.length;
   printButton.onclick = () => openAttendancePrintView(user, summaryRows, attendanceRows, userApprovedLeaves, settings, period);
+  correctionPrintButton.disabled = !summaryRows.length;
+  correctionPrintButton.onclick = () => openAttendancePrintView(user, summaryRows, attendanceRows, userApprovedLeaves, settings, period);
 
   summaryBody.innerHTML = summaryRows.length ? summaryRows.map((row) => {
     return `<tr>

@@ -821,12 +821,19 @@ function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLea
     const summary = summaryByDate.get(date);
     const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
     const leaveRanges = formatPrintLeaveRanges(dayLeaves, date);
-    const statusNote = summary && summary.status !== "normal" ? summaryStatusText(summary.status) : "";
+    const isWorkTimeNotEnough = summary?.status === "workTimeNotEnough";
+    const statusNote = summary && summary.status !== "normal" && !(correctDailyHours && isWorkTimeNotEnough)
+      ? summaryStatusText(summary.status)
+      : "";
     const leaveHours = Number(summary?.creditedLeaveHours || 0);
     const originalWorkHours = Number(summary?.workHours || 0);
-    const workHours = correctDailyHours
-      ? Math.min(originalWorkHours, Math.max(0, Number(settings.standardHours || 8) - leaveHours))
+    const availableWorkHours = Math.max(0, Number(settings.standardHours || 8) - leaveHours);
+    const correctedWorkHours = correctDailyHours
+      ? Math.min(originalWorkHours, availableWorkHours)
       : originalWorkHours;
+    const workHours = correctDailyHours && isWorkTimeNotEnough
+      ? Math.min(Math.round(correctedWorkHours), availableWorkHours)
+      : correctedWorkHours;
     rows.push({
       day,
       weekday: weekdayShort(new Date(`${date}T00:00:00`)),

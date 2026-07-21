@@ -284,7 +284,7 @@ export function pageChrome(title, subtitle = "") {
         </button>
       </div>
       <nav class="nav flex-column gap-1">
-        <a data-nav class="nav-link" href="${root}dashboard.html">儀表板</a>
+        <a data-nav class="nav-link" href="${root}dashboard.html">個人儀表板</a>
         <a data-nav class="nav-link" href="${root}attendance.html">出勤打卡</a>
         <a data-nav class="nav-link" href="${root}leave.html">請假申請</a>
         <a data-nav class="nav-link" href="${root}overtime.html">加班申請</a>

@@ -6,7 +6,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 import { db, requireAuth, bindLogout, pageChrome, qs, badge, fmtDateTime } from "./app.js";
 
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("儀表板", "今日出勤、假勤與待辦摘要")}</div>`;
+document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("個人儀表板", "今日出勤、假勤與待辦摘要")}</div>`;
 const profile = await requireAuth();
 bindLogout();
 

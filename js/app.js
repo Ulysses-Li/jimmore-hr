@@ -31,7 +31,8 @@ export const statusLabels = {
   workTimeNotEnough: "工時不足",
   pending: "待審核",
   approved: "已核准",
-  rejected: "已駁回"
+  rejected: "已駁回",
+  voided: "已無效"
 };
 
 export const statusBadges = {
@@ -41,7 +42,8 @@ export const statusBadges = {
   workTimeNotEnough: "danger",
   pending: "secondary",
   approved: "success",
-  rejected: "danger"
+  rejected: "danger",
+  voided: "secondary"
 };
 
 export const leaveTypes = [

@@ -6,6 +6,7 @@ import {
   getDocs,
   increment,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -1710,18 +1711,138 @@ async function renderRequests(collectionName) {
             <td>${row.hours}</td>
             <td>${isLeave ? escapeHtml(row.proxyUserName || "-") : "-"}</td>
             <td>${row.reason || "-"}</td>
-            <td>${badge(row.status)}</td>
-            <td>${row.status === "pending" ? `<div class="btn-group btn-group-sm"><button class="btn btn-success" data-approve>核准</button><button class="btn btn-outline-danger" data-reject>駁回</button></div>` : "-"}</td>
+            <td>${badge(row.status)}${row.status === "voided" && row.voidReason ? `<div class="small text-danger mt-1">${escapeHtml(row.voidReason)}</div>` : ""}</td>
+            <td>${row.status === "pending"
+              ? `<div class="btn-group btn-group-sm"><button class="btn btn-success" data-approve>核准</button><button class="btn btn-outline-danger" data-reject>駁回</button></div>`
+              : isLeave && row.status === "approved" && adminProfile.role === "admin"
+                ? `<button class="btn btn-sm btn-outline-danger" data-void-leave="${row.id}">無效</button>`
+                : "-"}</td>
           </tr>`;
         }).join("") : `<tr><td colspan="8" class="muted">尚無資料</td></tr>`}</tbody>
       </table></div>
-    </div>`;
+    </div>
+    ${isLeave && adminProfile.role === "admin" ? `
+      <div class="modal fade" id="voidLeaveModal" tabindex="-1" aria-labelledby="voidLeaveModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <form class="modal-content" id="voidLeaveForm">
+            <div class="modal-header">
+              <h2 class="modal-title fs-5" id="voidLeaveModalLabel">將已核准假單設為無效</h2>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+              <input type="hidden" id="voidLeaveRequestId">
+              <div class="alert alert-warning py-2" id="voidLeaveSummary"></div>
+              <label class="form-label" for="voidLeaveReason">無效原因</label>
+              <textarea class="form-control" id="voidLeaveReason" rows="3" maxlength="300" required placeholder="例如：員工取消原定請假"></textarea>
+              <div class="form-text">若為特休或補休，確認後會立即歸還本張假單扣除的時數。</div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+              <button type="submit" class="btn btn-danger" data-confirm-void-leave>確認設為無效</button>
+            </div>
+          </form>
+        </div>
+      </div>` : ""}`;
 
   content.querySelectorAll("[data-approve]").forEach((button) => {
     button.addEventListener("click", () => reviewRequest(collectionName, button.closest("tr"), "approved"));
   });
   content.querySelectorAll("[data-reject]").forEach((button) => {
     button.addEventListener("click", () => reviewRequest(collectionName, button.closest("tr"), "rejected"));
+  });
+  if (isLeave && adminProfile.role === "admin") bindVoidLeaveActions(requests);
+}
+
+function bindVoidLeaveActions(requests) {
+  const modalElement = qs("#voidLeaveModal");
+  const form = qs("#voidLeaveForm");
+  const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+
+  content.querySelectorAll("[data-void-leave]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const request = requests.find((item) => item.id === button.dataset.voidLeave);
+      if (!request) return;
+      qs("#voidLeaveRequestId").value = request.id;
+      qs("#voidLeaveSummary").textContent = `${request.userName || "員工"}｜${leaveTypeLabel(request.leaveType)}｜${fmtDateTime(request.startTime)} 至 ${fmtDateTime(request.endTime)}｜${request.hours || 0} 小時`;
+      qs("#voidLeaveReason").value = "";
+      modal.show();
+    });
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const requestId = qs("#voidLeaveRequestId").value;
+    const reason = qs("#voidLeaveReason").value.trim();
+    const submitButton = qs("[data-confirm-void-leave]", form);
+    if (!reason) {
+      showToast("請填寫無效原因。", "warning");
+      qs("#voidLeaveReason").focus();
+      return;
+    }
+
+    submitButton.disabled = true;
+    let result;
+    try {
+      result = await voidApprovedLeave(requestId, reason);
+    } catch (error) {
+      showToast(`無法將假單設為無效：${error.message}`, "danger");
+      submitButton.disabled = false;
+      return;
+    }
+
+    modal.hide();
+    const refundText = result.refundedHours
+      ? `，已歸還${leaveTypeLabel(result.leaveType)} ${result.refundedHours} 小時`
+      : "";
+    showToast(`假單已設為無效${refundText}`, "success");
+    await renderRequests("leaveRequests");
+  });
+}
+
+async function voidApprovedLeave(requestId, reason) {
+  if (adminProfile.role !== "admin") throw new Error("只有管理員可以將假單設為無效。");
+  const requestRef = doc(db, "leaveRequests", requestId);
+
+  return runTransaction(db, async (transaction) => {
+    const requestSnap = await transaction.get(requestRef);
+    if (!requestSnap.exists()) throw new Error("找不到這張假單。");
+    const request = requestSnap.data();
+    if (request.status !== "approved") throw new Error("這張假單已不是已核准狀態，請重新整理後再確認。");
+
+    const leaveField = request.leaveType === "annual"
+      ? "annualLeaveHours"
+      : request.leaveType === "compensatory"
+        ? "compensatoryLeaveHours"
+        : "";
+    const refundedHours = leaveField ? Number(request.hours || 0) : 0;
+    if (leaveField && (!Number.isFinite(refundedHours) || refundedHours <= 0)) {
+      throw new Error("假單時數資料不正確，無法安全回補餘額。");
+    }
+
+    let userRef = null;
+    if (leaveField) {
+      userRef = doc(db, "users", request.userId);
+      const userSnap = await transaction.get(userRef);
+      if (!userSnap.exists()) throw new Error("找不到員工資料，無法回補餘額。");
+    }
+
+    transaction.update(requestRef, {
+      status: "voided",
+      voidReason: reason,
+      voidedBy: adminProfile.id,
+      voidedByName: adminProfile.name || adminProfile.email || "",
+      voidedAt: serverTimestamp(),
+      refundedLeaveHours: refundedHours,
+      refundedLeaveType: leaveField ? request.leaveType : "",
+      updatedAt: serverTimestamp()
+    });
+    if (userRef) {
+      transaction.update(userRef, {
+        [leaveField]: increment(refundedHours),
+        updatedAt: serverTimestamp()
+      });
+    }
+    return { refundedHours, leaveType: request.leaveType };
   });
 }
 

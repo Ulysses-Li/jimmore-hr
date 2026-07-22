@@ -129,7 +129,7 @@ async function render() {
           <td>${leaveTypeLabel(row.leaveType)}</td>
           <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
           <td>${row.hours}</td>
-          <td>${badge(row.status)}</td>
+          <td>${badge(row.status)}${row.status === "voided" && row.voidReason ? `<div class="small text-danger mt-1">無效原因：${escapeHtml(row.voidReason)}</div>` : ""}</td>
           <td><button class="btn btn-sm btn-outline-primary" data-print-leave="${row.id}">列印PDF</button></td>
         </tr>`;
       }).join("")
@@ -190,6 +190,8 @@ function leavePrintHtml(row) {
     .hours-cell { font-size: 12pt; letter-spacing: .12em; }
     .sign { height: 20mm; vertical-align: top; }
     .note { height: 21mm; vertical-align: top; padding: 3mm 4mm; }
+    .void-banner { margin: 2mm 0 4mm; padding: 3mm; border: 2px solid #c00; color: #c00; text-align: center; font: 700 18pt "Microsoft JhengHei", sans-serif; }
+    .void-banner small { display: block; margin-top: 1mm; font-size: 10pt; font-weight: 500; }
     .print-actions { margin: 6mm auto 0; text-align: center; }
     .print-actions button { font: 16px "Microsoft JhengHei", sans-serif; padding: 8px 18px; }
     @media print {
@@ -202,6 +204,7 @@ function leavePrintHtml(row) {
 </head>
 <body>
   <div class="sheet">
+    ${row.status === "voided" ? `<div class="void-banner">已無效<small>原因：${escapeHtml(row.voidReason || "未填寫")}</small></div>` : ""}
     ${leavePrintFormCopy(row, start, end, fullDays, remainingHours)}
     <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
   </div>
@@ -256,7 +259,7 @@ function leavePrintFormCopy(row, start, end, fullDays, remainingHours) {
         </tr>
         <tr>
           <td class="label" colspan="2">備註</td>
-          <td colspan="6" class="note">職務代理人：${escapeHtml(row.proxyUserName || "")}</td>
+          <td colspan="6" class="note">職務代理人：${escapeHtml(row.proxyUserName || "")}${row.status === "voided" ? `<br>本假單已無效：${escapeHtml(row.voidReason || "未填寫")}` : ""}</td>
         </tr>
       </table>
     </div>`;

@@ -18,12 +18,8 @@
         <div class="muted">人事出勤管理平台</div>
       </div>
     </div>
-    <ul class="nav nav-tabs mb-3" role="tablist">
-      <li class="nav-item" role="presentation"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#loginPane" type="button">登入</button></li>
-      <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#registerPane" type="button">建立員工帳號</button></li>
-    </ul>
-    <div class="tab-content">
-      <section class="tab-pane fade show active" id="loginPane">
+    <div>
+      <section id="loginPane">
         <form id="loginForm">
           <div class="mb-3">
             <label class="form-label" for="loginEmail">Email</label>
@@ -34,15 +30,6 @@
             <input class="form-control" id="loginPassword" type="password" autocomplete="current-password" required>
           </div>
           <button class="btn btn-primary w-100">登入</button>
-        </form>
-      </section>
-      <section class="tab-pane fade" id="registerPane">
-        <form id="registerForm">
-          <div class="mb-3"><label class="form-label" for="registerName">姓名</label><input class="form-control" id="registerName" required></div>
-          <div class="mb-3"><label class="form-label" for="registerDepartment">部門</label><input class="form-control" id="registerDepartment"></div>
-          <div class="mb-3"><label class="form-label" for="registerEmail">Email</label><input class="form-control" id="registerEmail" type="email" autocomplete="email" required></div>
-          <div class="mb-3"><label class="form-label" for="registerPassword">Password</label><input class="form-control" id="registerPassword" type="password" autocomplete="new-password" minlength="6" required></div>
-          <button class="btn btn-outline-primary w-100">建立帳號</button>
         </form>
       </section>
     </div>

@@ -12,6 +12,18 @@ import {
   where
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 import {
+  createUserWithEmailAndPassword,
+  deleteUser,
+  getAuth,
+  signOut,
+  updateProfile
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import {
+  deleteApp,
+  initializeApp
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { firebaseConfig } from "./firebase-config.js";
+import {
   db,
   requireAuth,
   bindLogout,
@@ -101,6 +113,38 @@ async function renderEmployees() {
   const usersById = Object.fromEntries(users.map((user) => [user.id, user]));
   const departments = buildDepartmentOptions(users);
   content.innerHTML = `
+    <div class="panel p-3 mb-3">
+      <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
+        <div>
+          <h2 class="h5 mb-1">建立員工帳號</h2>
+          <div class="muted small">只有管理員可以建立帳號；新帳號預設為一般員工。</div>
+        </div>
+        <button class="btn btn-primary" type="button" data-bs-toggle="collapse" data-bs-target="#createEmployeePanel" aria-expanded="false" aria-controls="createEmployeePanel">新增員工</button>
+      </div>
+      <div class="collapse" id="createEmployeePanel">
+        <form id="createEmployeeForm" class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="createEmployeeName">姓名</label>
+            <input class="form-control" id="createEmployeeName" autocomplete="name" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="createEmployeeDepartment">部門</label>
+            <input class="form-control" id="createEmployeeDepartment" list="departmentOptions">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="createEmployeeEmail">Email</label>
+            <input class="form-control" id="createEmployeeEmail" type="email" autocomplete="off" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="createEmployeePassword">初始密碼</label>
+            <input class="form-control" id="createEmployeePassword" type="password" autocomplete="new-password" minlength="6" required>
+          </div>
+          <div class="col-12 d-flex justify-content-end">
+            <button class="btn btn-primary" type="submit" data-create-employee>建立帳號</button>
+          </div>
+        </form>
+      </div>
+    </div>
     <div class="panel p-3">
       <datalist id="departmentOptions">
         ${departments.map((department) => `<option value="${department}"></option>`).join("")}
@@ -138,6 +182,8 @@ async function renderEmployees() {
         ${users.map((row) => employeeEditorCard(row, users, shifts)).join("")}
       </div>
     </div>`;
+
+  bindCreateEmployeeForm();
 
   content.querySelectorAll("[data-save-user]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -351,8 +397,9 @@ async function renderAttendanceReport() {
         </div>
       </div>
       <div class="form-text">人事月報以月份為單位；切換 1 到 12 月後，彙總與原始明細都只顯示該月資料。</div>
-      <div class="d-flex justify-content-end mt-3">
+      <div class="d-flex justify-content-end gap-2 flex-wrap mt-3">
         <button class="btn btn-outline-primary" id="attendanceCompanyExportCsv" type="button">全公司出勤紀錄 EXCEL</button>
+        <button class="btn btn-outline-primary" id="attendanceCompanyExportCorrection" type="button">全公司出勤紀錄改</button>
       </div>
     </div>
     ${todayMissingAttendanceHtml(todayMissingUsers, today, settings)}
@@ -418,6 +465,9 @@ async function renderAttendanceReport() {
   qs("#attendanceMonthFilter").addEventListener("change", renderCurrentSelection);
   qs("#attendanceCompanyExportCsv").addEventListener("click", () => {
     downloadCompanyAttendanceWorkbook(users, allAttendanceRows, approvedLeaveRows, settings, selectedAttendancePeriod());
+  });
+  qs("#attendanceCompanyExportCorrection").addEventListener("click", () => {
+    openCompanyAttendancePrintView(users, allAttendanceRows, approvedLeaveRows, settings, selectedAttendancePeriod(), true);
   });
 }
 
@@ -672,6 +722,67 @@ function monthlyStatsHtml(stats) {
     <div class="col-md-2"><div class="border rounded p-2"><div class="small muted">異常</div><div class="fw-bold">${stats.abnormalCount} 天</div><div class="small muted">遲到 ${stats.lateCount} 次 / 早退 ${stats.earlyLeaveCount} 次</div></div></div>`;
 }
 
+function bindCreateEmployeeForm() {
+  const form = qs("#createEmployeeForm");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = qs("[data-create-employee]", form);
+    const name = qs("#createEmployeeName").value.trim();
+    const department = qs("#createEmployeeDepartment").value.trim();
+    const email = qs("#createEmployeeEmail").value.trim();
+    const password = qs("#createEmployeePassword").value;
+    submitButton.disabled = true;
+
+    try {
+      await createEmployeeAccount({ name, department, email, password });
+      showToast(`已建立 ${name} 的員工帳號`, "success");
+      form.reset();
+      await renderEmployees();
+    } catch (error) {
+      showToast(`建立帳號失敗：${authErrorMessage(error)}`, "danger");
+      submitButton.disabled = false;
+    }
+  });
+}
+
+async function createEmployeeAccount({ name, department, email, password }) {
+  const secondaryApp = initializeApp(firebaseConfig, `employee-creation-${Date.now()}`);
+  const secondaryAuth = getAuth(secondaryApp);
+  let createdUser = null;
+  try {
+    const credential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    createdUser = credential.user;
+    await updateProfile(credential.user, { displayName: name });
+    await setDoc(doc(db, "users", credential.user.uid), {
+      name,
+      email,
+      department,
+      role: "employee",
+      annualLeaveHours: 56,
+      compensatoryLeaveHours: 0,
+      isActive: true,
+      createdBy: adminProfile.id,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    await signOut(secondaryAuth);
+  } catch (error) {
+    if (createdUser) await deleteUser(createdUser).catch(() => {});
+    throw error;
+  } finally {
+    await deleteApp(secondaryApp);
+  }
+}
+
+function authErrorMessage(error) {
+  const messages = {
+    "auth/email-already-in-use": "這個 Email 已經有人使用。",
+    "auth/invalid-email": "Email 格式不正確。",
+    "auth/weak-password": "密碼強度不足，請至少輸入 6 個字元。"
+  };
+  return messages[error?.code] || error?.message || "請稍後再試。";
+}
+
 function openAttendancePrintView(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours = false) {
   const popup = window.open("", "_blank", "width=1200,height=820");
   if (!popup) {
@@ -680,6 +791,35 @@ function openAttendancePrintView(user, summaryRows, attendanceRows, approvedLeav
   }
   popup.document.open();
   popup.document.write(attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours));
+  popup.document.close();
+  popup.focus();
+}
+
+function openCompanyAttendancePrintView(users, allAttendanceRows, approvedLeaveRows, settings, period, correctDailyHours = false) {
+  const activeUsers = users
+    .filter((user) => user.isActive !== false)
+    .sort((a, b) => String(a.department || "").localeCompare(String(b.department || ""), "zh-Hant")
+      || String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
+  if (!activeUsers.length) {
+    showToast("沒有可列印的啟用員工。", "warning");
+    return;
+  }
+
+  const sheets = activeUsers.map((user) => {
+    const attendanceRows = allAttendanceRows.filter((row) => row.userId === user.id && isRowInPeriod(row, period));
+    const userApprovedLeaves = approvedLeaveRows.filter((row) => row.userId === user.id);
+    const summaryRows = buildAttendanceSummaryRows(attendanceRows, user, settings, userApprovedLeaves, period)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return { user, summaryRows, attendanceRows, approvedLeaves: userApprovedLeaves };
+  });
+
+  const popup = window.open("", "_blank", "width=1200,height=820");
+  if (!popup) {
+    showToast("瀏覽器封鎖列印視窗，請允許彈出視窗後再試一次。", "warning");
+    return;
+  }
+  popup.document.open();
+  popup.document.write(companyAttendancePrintHtml(sheets, settings, period, correctDailyHours));
   popup.document.close();
   popup.focus();
 }
@@ -746,6 +886,77 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
     <div class="lunch-note">${escapeHtml(printLunchSummary(settings))}</div>
     <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
   </div>
+</body>
+</html>`;
+}
+
+function companyAttendancePrintHtml(sheets, settings, period, correctDailyHours = false) {
+  const sheetHtml = sheets.map(({ user, summaryRows, attendanceRows, approvedLeaves }) => {
+    const rows = buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLeaves, settings, period, correctDailyHours);
+    const totalWorkHours = correctDailyHours
+      ? Number(rows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2))
+      : Number(summaryRows.reduce((sum, row) => sum + Number(row.workHours || 0), 0).toFixed(2));
+    const totalLeaveHours = Number(summaryRows.reduce((sum, row) => sum + Number(row.creditedLeaveHours || 0), 0).toFixed(2));
+    return `<section class="sheet">
+      <div class="topline">
+        <div class="company">竣貿國際股份有限公司 出勤紀錄</div>
+        <div class="meta">員工姓名：<strong>${escapeHtml(user.name || "")}</strong></div>
+        <div class="meta">紀錄年月：<strong>${period.year - 1911}</strong> 年 <strong>${period.month}</strong> 月</div>
+      </div>
+      <div class="tables">
+        ${attendancePrintTable(rows.slice(0, 16), "left-table", settings)}
+        ${attendancePrintTable(rows.slice(16, 32), "", settings)}
+        <table class="left-table"><tr class="summary-row"><td>出勤總時數統計</td><td>${totalWorkHours} 小時</td></tr></table>
+        <table><tr class="summary-row"><td>請假總時數統計</td><td>${totalLeaveHours} 小時</td></tr></table>
+      </div>
+      <div class="lunch-note">${escapeHtml(printLunchSummary(settings))}</div>
+    </section>`;
+  }).join("");
+
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>${period.year}-${String(period.month).padStart(2, "0")} 全公司出勤紀錄改</title>
+  <style>
+    @page { size: A4 landscape; margin: 6mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { margin: 0; background: #fff; color: #000; font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+    .sheet { width: 285mm; min-height: 198mm; margin: 0 auto; padding: 1.5mm 0; break-after: page; page-break-after: always; }
+    .sheet:last-of-type { break-after: auto; page-break-after: auto; }
+    .topline { display: grid; grid-template-columns: 1.5fr .8fr 1fr; align-items: end; gap: 5mm; margin-bottom: 2mm; }
+    .company { text-align: center; font-weight: 700; font-size: 14pt; letter-spacing: .06em; }
+    .meta { font-size: 10pt; white-space: nowrap; }
+    .meta strong { display: inline-block; min-width: 19mm; border-bottom: 1px solid #000; text-align: center; padding: 0 1mm; }
+    .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1.5px solid #000; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.4pt; line-height: 1.05; }
+    .left-table { border-right: 1.5px solid #000; }
+    th, td { border: 1px solid #000; text-align: center; vertical-align: middle; padding: .35mm .25mm; height: 7.8mm; overflow: hidden; }
+    th { font-weight: 700; }
+    thead th { height: 6.4mm; }
+    .day { width: 5.5mm; font-size: 8pt; }
+    .week { width: 5mm; font-size: 8pt; }
+    .time { width: 10.2mm; }
+    .hours { width: 7.5mm; }
+    .leave-hours { width: 7.5mm; }
+    .leave-type { width: 10mm; }
+    .note { width: 14mm; font-size: 6.5pt; }
+    .punch-time { white-space: pre-line; font-size: 6.8pt; line-height: 1.05; }
+    .lunch-note { margin-top: 1.5mm; text-align: left; font-size: 8pt; }
+    .rest-day td, .empty-day td { background: #aaa !important; }
+    .empty-day td { color: transparent; }
+    .summary-row td { height: 8mm; font-size: 9pt; background: #fff; }
+    .print-actions { position: sticky; top: 0; z-index: 2; padding: 10px; text-align: center; background: rgba(255, 255, 255, .94); border-bottom: 1px solid #ddd; }
+    .print-actions button { font: 15px "Microsoft JhengHei", sans-serif; padding: 8px 18px; }
+    @media print {
+      .print-actions { display: none; }
+      .sheet { width: 285mm; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-actions"><button onclick="window.print()">列印全公司 / 另存 PDF</button></div>
+  ${sheetHtml}
 </body>
 </html>`;
 }

@@ -183,9 +183,10 @@ function leavePrintHtml(row) {
     .label { text-align: center; font-weight: 700; white-space: nowrap; }
     .center { text-align: center; }
     .date-cell { letter-spacing: .18em; }
-    .period-label { text-align: center; font-weight: 700; font-size: 11pt; }
-    .period-cell { font-size: 11pt; line-height: 1.45; padding-left: 4mm; white-space: nowrap; }
-    .period-prefix { display: inline-block; width: 9mm; font-weight: 700; }
+    .period-label { text-align: center; font-weight: 700; font-size: 11pt; line-height: 1.35; }
+    .period-cell { font-size: 10.5pt; padding: 1.7mm 2.2mm; white-space: nowrap; }
+    .period-line { display: flex; align-items: center; justify-content: space-between; gap: 0.6mm; width: 100%; }
+    .period-prefix { font-weight: 700; }
     .hours-cell { font-size: 12pt; letter-spacing: .12em; }
     .sign { height: 20mm; vertical-align: top; }
     .note { height: 21mm; vertical-align: top; padding: 3mm 4mm; }
@@ -235,16 +236,15 @@ function leavePrintFormCopy(row, start, end, fullDays, remainingHours) {
           <td class="center">${escapeHtml(row.department || profile.department || "")}</td>
           <td class="label">假別</td>
           <td class="center">${escapeHtml(leaveTypeLabel(row.leaveType))}</td>
-          <td class="period-label">請假期間</td>
-          <td colspan="3" class="period-cell"><span class="period-prefix">自</span>民國 ${start.getFullYear() - 1911} 年 ${start.getMonth() + 1} 月 ${start.getDate()} 日 ${pad2(start.getHours())} 時 ${pad2(start.getMinutes())} 分</td>
+          <td rowspan="2" class="period-label">請假期間</td>
+          <td colspan="3" class="period-cell"><div class="period-line"><span class="period-prefix">自</span><span>民國</span><span>${start.getFullYear() - 1911}</span><span>年</span><span>${start.getMonth() + 1}</span><span>月</span><span>${start.getDate()}</span><span>日</span><span>${pad2(start.getHours())}</span><span>時</span><span>${pad2(start.getMinutes())}</span><span>分</span></div></td>
         </tr>
         <tr>
           <td class="label">姓名</td>
           <td class="center">${escapeHtml(row.userName || profile.name || "")}</td>
           <td class="label">事由</td>
           <td class="center">${escapeHtml(row.reason || "")}</td>
-          <td></td>
-          <td colspan="3" class="period-cell"><span class="period-prefix">至</span>民國 ${end.getFullYear() - 1911} 年 ${end.getMonth() + 1} 月 ${end.getDate()} 日 ${pad2(end.getHours())} 時 ${pad2(end.getMinutes())} 分</td>
+          <td colspan="3" class="period-cell"><div class="period-line"><span class="period-prefix">至</span><span>民國</span><span>${end.getFullYear() - 1911}</span><span>年</span><span>${end.getMonth() + 1}</span><span>月</span><span>${end.getDate()}</span><span>日</span><span>${pad2(end.getHours())}</span><span>時</span><span>${pad2(end.getMinutes())}</span><span>分</span></div></td>
         </tr>
         <tr>
           <td class="label" colspan="2">請假時數</td>

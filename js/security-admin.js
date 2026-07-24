@@ -42,6 +42,10 @@ async function renderAttendanceSecurity(profile, content) {
     .map((item) => ({ id: item.id, ...item.data() }))
     .filter((item) => item.status === "pending");
   const pendingReviewCount = cases.filter((item) => item.status === "pending_manager_review").length;
+  const attentionStatuses = new Set(["pending_manager_review", "needs_more_info"]);
+  const attentionCount = cases.filter((item) => attentionStatuses.has(item.status)).length;
+  const waitingCount = cases.filter((item) => ["pending_employee_reason", "overdue"].includes(item.status)).length;
+  const completedCount = cases.filter((item) => ["approved", "rejected"].includes(item.status)).length;
   const host = document.createElement("div");
   host.id = "attendanceSecurityPanel";
   host.innerHTML = `
@@ -74,7 +78,29 @@ async function renderAttendanceSecurity(profile, content) {
         </button>
       </div>
       <div class="collapse" id="securityCaseCollapse">
-        <div class="pt-3" id="securityCaseList">${cases.length ? cases.slice(0, 100).map((row) => caseHtml(row, profile)).join("") : `<div class="muted">目前沒有未打卡案件</div>`}</div>
+        <div class="exception-workspace mt-3">
+          <div class="exception-summary-grid">
+            <button class="exception-summary-card is-active" type="button" data-case-filter="attention">
+              <span>待主管處理</span><strong>${attentionCount}</strong>
+            </button>
+            <button class="exception-summary-card" type="button" data-case-filter="waiting">
+              <span>待員工／逾期</span><strong>${waitingCount}</strong>
+            </button>
+            <button class="exception-summary-card" type="button" data-case-filter="completed">
+              <span>已完成</span><strong>${completedCount}</strong>
+            </button>
+            <button class="exception-summary-card" type="button" data-case-filter="all">
+              <span>全部案件</span><strong>${cases.length}</strong>
+            </button>
+          </div>
+          <div class="exception-toolbar">
+            <label class="visually-hidden" for="securityCaseSearch">搜尋未打卡案件</label>
+            <input class="form-control form-control-sm" id="securityCaseSearch" type="search" placeholder="搜尋姓名、部門、日期或原因" data-case-search>
+            <span class="small muted" data-case-result-count></span>
+          </div>
+          <div class="exception-list" id="securityCaseList">${cases.length ? cases.slice(0, 100).map((row) => caseHtml(row, profile)).join("") : `<div class="muted">目前沒有未打卡案件</div>`}</div>
+          <div class="exception-empty muted" data-case-empty hidden>目前篩選條件沒有案件。</div>
+        </div>
       </div>
     </div>`;
   content.insertBefore(host, content.firstChild);
@@ -92,23 +118,40 @@ async function renderAttendanceSecurity(profile, content) {
       }
     });
   });
+  bindCaseFilters(host);
   bindCaseReviews(host);
 }
 
 function caseHtml(row, profile) {
   const pendingReview = row.status === "pending_manager_review";
   const correctionTime = row.requestedTime || timeMentionedInReason(row.reason) || row.workStart || "09:00";
-  return `<section class="border rounded p-3 mb-2" data-review-case="${escapeHtml(row.id)}">
-    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
-      <div>
-        <strong>${escapeHtml(row.date)} · ${escapeHtml(row.userName || row.userId)}</strong>
-        <div class="small muted">${escapeHtml(row.department || "-")} · ${escapeHtml(row.shiftName || row.workStart || "班別")}</div>
+  const group = pendingReview || row.status === "needs_more_info"
+    ? "attention"
+    : ["pending_employee_reason", "overdue"].includes(row.status) ? "waiting" : "completed";
+  const searchableText = [
+    row.date, row.userName, row.userId, row.department, row.shiftName, row.workStart,
+    row.reason, statusLabels[row.status] || row.status
+  ].filter(Boolean).join(" ").toLocaleLowerCase("zh-Hant");
+  const statusTone = pendingReview ? "warning"
+    : row.status === "approved" ? "success"
+      : ["rejected", "overdue"].includes(row.status) ? "danger" : "secondary";
+  return `<details class="exception-case" data-review-case="${escapeHtml(row.id)}"
+    data-case-group="${group}" data-case-search-text="${escapeHtml(searchableText)}">
+    <summary class="exception-case-summary">
+      <span class="exception-case-date">${escapeHtml(row.date)}</span>
+      <span class="exception-case-person">
+        <strong>${escapeHtml(row.userName || row.userId)}</strong>
+        <small>${escapeHtml(row.department || "未分部門")} · ${escapeHtml(row.shiftName || row.workStart || "班別")}</small>
+      </span>
+      <span class="badge text-bg-${statusTone}">${escapeHtml(statusLabels[row.status] || row.status)}</span>
+      <span class="exception-case-toggle" aria-hidden="true">查看詳情</span>
+    </summary>
+    <div class="exception-case-body">
+      <div class="exception-case-facts">
+        <div><span>員工原因</span><strong>${escapeHtml(row.reason || "尚未填寫")}</strong></div>
+        ${row.laterPunchAt ? `<div><span>後續打卡</span><strong>${fmtDateTime(row.laterPunchAt)}（${row.laterPunchType === "checkIn" ? "簽到" : "簽退"}）</strong></div>` : ""}
+        ${row.reviewNote ? `<div><span>審核備註</span><strong>${escapeHtml(row.reviewNote)}</strong></div>` : ""}
       </div>
-      <span class="badge text-bg-${pendingReview ? "warning" : "secondary"}">${escapeHtml(statusLabels[row.status] || row.status)}</span>
-    </div>
-    <div class="mt-2 small"><strong>員工原因：</strong>${escapeHtml(row.reason || "尚未填寫")}</div>
-    ${row.laterPunchAt ? `<div class="small"><strong>後續打卡：</strong>${fmtDateTime(row.laterPunchAt)}（${row.laterPunchType === "checkIn" ? "簽到" : "簽退"}）</div>` : ""}
-    ${row.reviewNote ? `<div class="small"><strong>審核備註：</strong>${escapeHtml(row.reviewNote)}</div>` : ""}
     ${pendingReview ? `<div class="row g-2 mt-1">
       <div class="col-md-2"><input class="form-control form-control-sm" type="time" data-correction-time value="${escapeHtml(correctionTime)}" aria-label="補登簽到時間"></div>
       <div class="col-md-5"><input class="form-control form-control-sm" data-review-note placeholder="審核備註或要求補充內容"></div>
@@ -123,7 +166,43 @@ function caseHtml(row, profile) {
       <button class="btn btn-sm btn-outline-primary" type="button" data-repair-approved>補回出勤表</button>
     </div>` : ""}
     ${profile.role === "admin" && ["approved", "rejected", "overdue", "pending_manager_review"].includes(row.status) ? manualCorrectionHtml(row) : ""}
-  </section>`;
+    </div>
+  </details>`;
+}
+
+function bindCaseFilters(host) {
+  const buttons = [...host.querySelectorAll("[data-case-filter]")];
+  const rows = [...host.querySelectorAll("[data-review-case]")];
+  const search = host.querySelector("[data-case-search]");
+  const resultCount = host.querySelector("[data-case-result-count]");
+  const empty = host.querySelector("[data-case-empty]");
+  if (!buttons.length || !search || !resultCount || !empty) return;
+  let activeFilter = "attention";
+
+  const apply = () => {
+    const term = search.value.trim().toLocaleLowerCase("zh-Hant");
+    let visibleCount = 0;
+    rows.forEach((row) => {
+      const groupMatches = activeFilter === "all" || row.dataset.caseGroup === activeFilter;
+      const searchMatches = !term || row.dataset.caseSearchText.includes(term);
+      const visible = groupMatches && searchMatches;
+      row.hidden = !visible;
+      if (!visible) row.open = false;
+      if (visible) visibleCount += 1;
+    });
+    resultCount.textContent = `顯示 ${visibleCount} 筆`;
+    empty.hidden = visibleCount !== 0;
+  };
+
+  buttons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activeFilter = button.dataset.caseFilter;
+      buttons.forEach((item) => item.classList.toggle("is-active", item === button));
+      apply();
+    });
+  });
+  search.addEventListener("input", apply);
+  apply();
 }
 
 function manualCorrectionHtml(row) {

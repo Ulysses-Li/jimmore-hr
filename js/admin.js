@@ -23,7 +23,7 @@ import {
   bootstrap
 } from "./app.js";
 import { callSecureFunction } from "./app.js";
-import { renderSecurityAdmin } from "./security-admin.js?v=20260724-3";
+import { renderSecurityAdmin } from "./security-admin.js?v=20260724-4";
 
 const mode = document.body.dataset.adminMode;
 const titleMap = {

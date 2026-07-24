@@ -176,13 +176,6 @@ async function renderEmployees() {
             </select>
           </div>
           <div class="col-md-6">
-            <label class="form-label" for="createEmployeeAttendanceRequired">出勤打卡</label>
-            <select class="form-select" id="createEmployeeAttendanceRequired">
-              <option value="required" selected>需要打卡</option>
-              <option value="exempt">免打卡</option>
-            </select>
-          </div>
-          <div class="col-md-6">
             <label class="form-label" for="createEmployeeEmail">Email</label>
             <input class="form-control" id="createEmployeeEmail" type="email" autocomplete="off" required>
           </div>
@@ -244,7 +237,13 @@ async function renderEmployees() {
         const field = input.dataset.field;
         if (input.type === "checkbox") payload[field] = input.checked;
         else if (input.type === "number") payload[field] = Number(input.value || 0);
-        else if (field === "attendanceRequired") payload[field] = input.value === "true";
+        else if (field === "defaultShiftId" && input.value === "__attendance_exempt__") {
+          payload.defaultShiftId = input.dataset.fallbackShiftId;
+          payload.attendanceRequired = false;
+        } else if (field === "defaultShiftId") {
+          payload.defaultShiftId = input.value.trim();
+          payload.attendanceRequired = true;
+        }
         else payload[field] = input.value.trim();
       });
       button.disabled = true;
@@ -279,7 +278,7 @@ function employeeEditorCard(row, users, shifts) {
         <span class="badge text-bg-${enabled ? "success" : "secondary"}">${enabled ? "啟用" : "停用"}</span>
         <span class="badge text-bg-light text-dark">${escapeHtml(role)}</span>
         <span class="badge text-bg-light text-dark">${row.workMode === "field" ? "外勤" : "內勤"}</span>
-        <span class="badge text-bg-light text-dark">${row.attendanceRequired === false ? "免打卡" : "需打卡"}</span>
+        ${row.attendanceRequired === false ? `<span class="badge text-bg-light text-dark">免打卡</span>` : ""}
         <button class="btn btn-sm btn-primary" data-save-user>儲存</button>
       </div>
     </div>
@@ -318,13 +317,6 @@ function employeeEditorCard(row, users, shifts) {
       <div class="employee-editor-section employee-editor-work">
         <div class="employee-editor-section-title">班別與假別</div>
         <div class="employee-field">
-          <label class="form-label">出勤打卡</label>
-          <select class="form-select form-select-sm" data-field="attendanceRequired">
-            <option value="true" ${row.attendanceRequired !== false ? "selected" : ""}>需要打卡</option>
-            <option value="false" ${row.attendanceRequired === false ? "selected" : ""}>免打卡</option>
-          </select>
-        </div>
-        <div class="employee-field">
           <label class="form-label">工作型態</label>
           <select class="form-select form-select-sm" data-field="workMode">
             <option value="office" ${row.workMode !== "field" ? "selected" : ""}>內勤（限公司打卡據點）</option>
@@ -333,8 +325,9 @@ function employeeEditorCard(row, users, shifts) {
         </div>
         <div class="employee-field">
           <label class="form-label">預設班別</label>
-          <select class="form-select form-select-sm" data-field="defaultShiftId">
-            ${shifts.map((shift) => `<option value="${shift.id}" ${(row.defaultShiftId || shifts[0].id) === shift.id ? "selected" : ""}>${shift.name}</option>`).join("")}
+          <select class="form-select form-select-sm" data-field="defaultShiftId" data-fallback-shift-id="${row.defaultShiftId || shifts[0].id}">
+            <option value="__attendance_exempt__" ${row.attendanceRequired === false ? "selected" : ""}>免打卡</option>
+            ${shifts.map((shift) => `<option value="${shift.id}" ${row.attendanceRequired !== false && (row.defaultShiftId || shifts[0].id) === shift.id ? "selected" : ""}>${shift.name}</option>`).join("")}
           </select>
         </div>
         <div class="employee-editor-inline">
@@ -811,11 +804,10 @@ function bindCreateEmployeeForm() {
     const email = qs("#createEmployeeEmail").value.trim();
     const password = qs("#createEmployeePassword").value;
     const workMode = qs("#createEmployeeWorkMode").value;
-    const attendanceRequired = qs("#createEmployeeAttendanceRequired").value !== "exempt";
     submitButton.disabled = true;
 
     try {
-      await createEmployeeAccount({ name, department, email, password, workMode, attendanceRequired });
+      await createEmployeeAccount({ name, department, email, password, workMode });
       showToast(`已建立 ${name} 的員工帳號`, "success");
       form.reset();
       await renderEmployees();
@@ -826,8 +818,8 @@ function bindCreateEmployeeForm() {
   });
 }
 
-async function createEmployeeAccount({ name, department, email, password, workMode, attendanceRequired }) {
-  await callSecureFunction("createEmployeeAccount", { name, department, email, password, workMode, attendanceRequired });
+async function createEmployeeAccount({ name, department, email, password, workMode }) {
+  await callSecureFunction("createEmployeeAccount", { name, department, email, password, workMode });
 }
 
 function authErrorMessage(error) {

@@ -6,10 +6,11 @@ import {
   serverTimestamp,
   where
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { db, requireAuth, bindLogout, mountPageShell, qs, badge, fmtDateTime, hoursBetween, showToast } from "./app.js";
+import { db, requireAuth, bindLogout, mountPageShell, qs, badge, fmtDateTime, getWorkSettings, hoursBetween, showToast } from "./app.js";
 
 mountPageShell("加班申請", "建立加班單並選擇是否轉補休");
 const profile = await requireAuth();
+const settings = await getWorkSettings();
 bindLogout();
 
 qs("#pageContent").innerHTML = `
@@ -21,8 +22,9 @@ qs("#pageContent").innerHTML = `
         <div class="mb-3">
           <label class="form-label" for="endTime">結束時間</label>
           <input class="form-control" id="endTime" type="datetime-local" required>
-          <div class="form-text">最少加班 1 小時。</div>
+          <div class="form-text">最少加班 1 小時；跨過午休 ${settings.lunchStart || "12:00"}–${settings.lunchEnd || "13:00"} 會自動扣除。</div>
         </div>
+        <div class="alert alert-info py-2" id="overtimeHoursPreview">請選擇開始與結束時間。</div>
         <div class="mb-3"><label class="form-label" for="reason">原因</label><textarea class="form-control" id="reason" rows="3" required></textarea></div>
         <div class="form-check form-switch mb-3">
           <input class="form-check-input" type="checkbox" id="convertToCompTime" checked>
@@ -46,7 +48,7 @@ qs("#overtimeForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const start = new Date(qs("#startTime").value);
   const end = new Date(qs("#endTime").value);
-  const hours = hoursBetween(start, end);
+  const hours = calculateOvertimeHours(start, end);
   if (hours < 1) {
     showToast("加班時間最少要 1 小時", "warning");
     return;
@@ -118,10 +120,54 @@ function syncMinimumEndTime() {
   }
 }
 
+function calculateOvertimeHours(start, end) {
+  return calculateHoursExcludingLunch(start, end, settings.lunchStart || "12:00", settings.lunchEnd || "13:00");
+}
+
+function calculateHoursExcludingLunch(start, end, lunchStart, lunchEnd) {
+  let lunchMilliseconds = 0;
+  const day = new Date(start);
+  day.setHours(0, 0, 0, 0);
+  const lastDay = new Date(end);
+  lastDay.setHours(0, 0, 0, 0);
+  while (day <= lastDay) {
+    const lunchFrom = new Date(day);
+    const lunchTo = new Date(day);
+    const [startHour, startMinute] = lunchStart.split(":").map(Number);
+    const [endHour, endMinute] = lunchEnd.split(":").map(Number);
+    lunchFrom.setHours(startHour, startMinute, 0, 0);
+    lunchTo.setHours(endHour, endMinute, 0, 0);
+    lunchMilliseconds += Math.max(
+      0,
+      Math.min(end.getTime(), lunchTo.getTime()) - Math.max(start.getTime(), lunchFrom.getTime())
+    );
+    day.setDate(day.getDate() + 1);
+  }
+  return Number(Math.max(0, hoursBetween(start, end) - lunchMilliseconds / 36e5).toFixed(2));
+}
+
+function updateHoursPreview() {
+  const start = new Date(qs("#startTime").value);
+  const end = new Date(qs("#endTime").value);
+  const preview = qs("#overtimeHoursPreview");
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+    preview.textContent = "請選擇有效的開始與結束時間。";
+    preview.className = "alert alert-warning py-2";
+    return;
+  }
+  const hours = calculateOvertimeHours(start, end);
+  preview.textContent = `預計加班時數：${hours} 小時（已扣除重疊的午休時間）`;
+  preview.className = hours >= 1 ? "alert alert-info py-2" : "alert alert-warning py-2";
+}
+
 function toDatetimeLocalValue(date) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
 }
 
-qs("#startTime").addEventListener("change", syncMinimumEndTime);
+qs("#startTime").addEventListener("change", () => {
+  syncMinimumEndTime();
+  updateHoursPreview();
+});
+qs("#endTime").addEventListener("change", updateHoursPreview);
 await render();

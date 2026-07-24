@@ -163,8 +163,34 @@ function calculateWorkHours(records, dateKey, settings = {}) {
   return Number((minutes / 60).toFixed(2));
 }
 
+function calculateHoursExcludingLunch(startValue, endValue, settings = {}) {
+  const start = startValue?.toDate ? startValue.toDate() : new Date(startValue);
+  const end = endValue?.toDate ? endValue.toDate() : new Date(endValue);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return 0;
+
+  const firstDate = todayKeyTaipei(start);
+  const lastDate = todayKeyTaipei(end);
+  let dateKey = firstDate;
+  let lunchMinutes = 0;
+  while (dateKey <= lastDate) {
+    lunchMinutes += overlapMinutes(
+      start,
+      end,
+      taipeiDateTime(dateKey, settings.lunchStart || "12:00"),
+      taipeiDateTime(dateKey, settings.lunchEnd || "13:00")
+    );
+    const nextDate = new Date(`${dateKey}T00:00:00.000Z`);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    dateKey = nextDate.toISOString().slice(0, 10);
+  }
+
+  const grossMinutes = (end.getTime() - start.getTime()) / 60000;
+  return Number((Math.max(0, grossMinutes - lunchMinutes) / 60).toFixed(2));
+}
+
 module.exports = {
   attendanceRanges,
+  calculateHoursExcludingLunch,
   calculateWorkHours,
   decideLocation,
   effectiveWorkEnd,

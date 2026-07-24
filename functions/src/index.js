@@ -55,6 +55,7 @@ const adminHandlers = createAdminHandlers({
 exports.createEmployeeAccount = callable(adminHandlers.createEmployeeAccount);
 exports.updateEmployee = callable(adminHandlers.updateEmployee);
 exports.reviewHrRequest = callable(adminHandlers.reviewHrRequest);
+exports.recalculateOvertimeRequest = callable(adminHandlers.recalculateOvertimeRequest);
 exports.voidApprovedLeave = callable(adminHandlers.voidApprovedLeave);
 exports.saveWorkSettings = callable(adminHandlers.saveWorkSettings);
 

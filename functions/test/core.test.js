@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  calculateHoursExcludingLunch,
   calculateWorkHours,
   decideLocation,
   haversineMeters,
@@ -57,6 +58,26 @@ test("work hours pair punches and deduct lunch overlap", () => {
     { type: "checkOut", timestamp: new Date("2026-07-23T10:00:00Z") }
   ];
   assert.equal(calculateWorkHours(records, "2026-07-23", { lunchStart: "12:00", lunchEnd: "13:00" }), 8);
+});
+
+test("overtime hours deduct configured lunch overlap", () => {
+  const settings = { lunchStart: "12:00", lunchEnd: "13:00" };
+  assert.equal(
+    calculateHoursExcludingLunch(
+      new Date("2026-07-18T01:00:00Z"),
+      new Date("2026-07-18T10:00:00Z"),
+      settings
+    ),
+    8
+  );
+  assert.equal(
+    calculateHoursExcludingLunch(
+      new Date("2026-07-18T05:00:00Z"),
+      new Date("2026-07-18T08:00:00Z"),
+      settings
+    ),
+    3
+  );
 });
 
 test("weekends and configured holidays are rest days", () => {

@@ -3,6 +3,7 @@
 const { getAuth } = require("firebase-admin/auth");
 const { FieldValue } = require("firebase-admin/firestore");
 const { HttpsError } = require("firebase-functions/v2/https");
+const { calculateHoursExcludingLunch } = require("../core");
 
 const ROLES = new Set(["employee", "manager", "admin"]);
 const REQUEST_COLLECTIONS = new Set(["leaveRequests", "overtimeRequests"]);
@@ -191,6 +192,10 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
     if (!initialSnap.exists) throw new HttpsError("not-found", "找不到申請單。");
     const employee = await profileFor(initialSnap.data().userId);
     requireReviewer(reviewer, employee);
+    const settingsSnap = collectionName === "overtimeRequests"
+      ? await db.doc("workSettings/default").get()
+      : null;
+    const workSettings = settingsSnap?.exists ? settingsSnap.data() : {};
     let adjustment = null;
 
     await db.runTransaction(async (transaction) => {
@@ -202,7 +207,13 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
       }
       if (!userSnap.exists) throw new HttpsError("not-found", "找不到員工資料。");
       const data = currentSnap.data();
-      const hours = finiteNumber(data.hours, "時數", 0.01, 24 * 31);
+      let hours = finiteNumber(data.hours, "時數", 0.01, 24 * 31);
+      if (collectionName === "overtimeRequests") {
+        hours = calculateHoursExcludingLunch(data.startTime, data.endTime, workSettings);
+        if (hours < 1) {
+          throw new HttpsError("failed-precondition", "扣除午休後，加班時間必須至少 1 小時。");
+        }
+      }
       if (status === "approved" && collectionName === "leaveRequests") {
         wholeHours(hours);
         const field = data.leaveType === "annual"
@@ -221,6 +232,11 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
       }
       transaction.update(requestRef, {
         status,
+        ...(collectionName === "overtimeRequests" ? {
+          hours,
+          lunchDeducted: true,
+          hoursCalculation: "lunch_excluded"
+        } : {}),
         approvedBy: reviewer.id,
         approvedByName: reviewer.name || reviewer.email || "",
         approvedAt: FieldValue.serverTimestamp(),
@@ -241,6 +257,66 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
       adjustment
     });
     return { status };
+  }
+
+  async function recalculateOvertimeRequest(request) {
+    const reviewer = await profileFor(request.auth.uid);
+    const requestId = cleanText(request.data?.requestId, 128);
+    if (!requestId) throw new HttpsError("invalid-argument", "請指定加班申請單。");
+
+    const requestRef = db.doc(`overtimeRequests/${requestId}`);
+    const initialSnap = await requestRef.get();
+    if (!initialSnap.exists) throw new HttpsError("not-found", "找不到加班申請單。");
+    const employee = await profileFor(initialSnap.data().userId);
+    requireReviewer(reviewer, employee);
+    const settingsSnap = await db.doc("workSettings/default").get();
+    const settings = settingsSnap.exists ? settingsSnap.data() : {};
+    let result;
+
+    await db.runTransaction(async (transaction) => {
+      const overtimeSnap = await transaction.get(requestRef);
+      const userRef = db.doc(`users/${employee.id}`);
+      const userSnap = await transaction.get(userRef);
+      if (!overtimeSnap.exists) throw new HttpsError("not-found", "找不到加班申請單。");
+      if (!userSnap.exists) throw new HttpsError("not-found", "找不到員工資料。");
+      const overtime = overtimeSnap.data();
+      if (overtime.status !== "approved") {
+        throw new HttpsError("failed-precondition", "只有已核准的加班單可以修正時數。");
+      }
+
+      const oldHours = finiteNumber(overtime.hours, "原加班時數", 0.01, 24 * 31);
+      const newHours = calculateHoursExcludingLunch(overtime.startTime, overtime.endTime, settings);
+      if (newHours < 1) {
+        throw new HttpsError("failed-precondition", "扣除午休後，加班時間必須至少 1 小時。");
+      }
+      const balanceAdjustment = overtime.convertToCompTime === true
+        ? Number((newHours - oldHours).toFixed(2))
+        : 0;
+
+      transaction.update(requestRef, {
+        hours: newHours,
+        lunchDeducted: true,
+        hoursCalculation: "lunch_excluded",
+        hoursRecalculatedBy: reviewer.id,
+        hoursRecalculatedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      if (balanceAdjustment) {
+        transaction.update(userRef, {
+          compensatoryLeaveHours: FieldValue.increment(balanceAdjustment),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+      result = { oldHours, newHours, balanceAdjustment };
+    });
+
+    await audit("overtime.hours_recalculated", reviewer, {
+      targetUserId: employee.id,
+      department: employee.department,
+      requestId,
+      ...result
+    });
+    return result;
   }
 
   async function voidApprovedLeave(request) {
@@ -365,6 +441,7 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
     createEmployeeAccount,
     updateEmployee,
     reviewHrRequest,
+    recalculateOvertimeRequest,
     voidApprovedLeave,
     saveWorkSettings
   };

@@ -55,6 +55,8 @@ qs("#overtimeForm").addEventListener("submit", async (event) => {
     userId: profile.id,
     userName: profile.name,
     department: profile.department || "",
+    managerId: profile.managerId || "",
+    managerName: profile.managerName || "",
     startTime: start,
     endTime: end,
     hours: Number(hours.toFixed(2)),

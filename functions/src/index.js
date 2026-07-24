@@ -127,6 +127,7 @@ exports.requestPasskeyEnrollment = callable(async function requestPasskeyEnrollm
     userId: employee.id,
     userName: employee.name || employee.email || "",
     department: employee.department || "",
+    managerId: employee.managerId || "",
     deviceLabel,
     status: "pending",
     requestedAt: FieldValue.serverTimestamp(),

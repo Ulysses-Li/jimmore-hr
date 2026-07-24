@@ -28,9 +28,7 @@ export async function renderSecurityAdmin(mode, profile, content) {
 
 function scopedQuery(name, profile, extra = null) {
   if (profile.role === "admin") return extra ? query(collection(db, name), extra) : collection(db, name);
-  const filters = [where("department", "==", profile.department || "")];
-  if (extra) filters.push(extra);
-  return query(collection(db, name), ...filters);
+  return query(collection(db, name), where("managerId", "==", profile.id));
 }
 
 async function renderAttendanceSecurity(profile, content) {
@@ -40,7 +38,9 @@ async function renderAttendanceSecurity(profile, content) {
   ]);
   const cases = casesSnap.docs.map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const enrollments = enrollmentsSnap.docs.map((item) => ({ id: item.id, ...item.data() }));
+  const enrollments = enrollmentsSnap.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((item) => item.status === "pending");
   const host = document.createElement("div");
   host.id = "attendanceSecurityPanel";
   host.innerHTML = `

@@ -17,10 +17,21 @@ test("Firestore rules enforce attendance ownership and server-only writes", { sk
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const firestore = context.firestore();
       const { doc, setDoc } = require("firebase/firestore");
-      await setDoc(doc(firestore, "users/employee-a"), { role: "employee", isActive: true, department: "工程" });
+      await setDoc(doc(firestore, "users/employee-a"), {
+        role: "employee",
+        isActive: true,
+        department: "工程",
+        managerId: "manager-a"
+      });
       await setDoc(doc(firestore, "users/manager-a"), { role: "manager", isActive: true, department: "工程" });
       await setDoc(doc(firestore, "users/manager-b"), { role: "manager", isActive: true, department: "外銷" });
       await setDoc(doc(firestore, "attendance/record-a"), { userId: "employee-a", department: "工程" });
+      await setDoc(doc(firestore, "leaveRequests/request-a"), {
+        userId: "employee-a",
+        department: "工程",
+        managerId: "manager-a",
+        status: "pending"
+      });
     });
     const { doc, getDoc, setDoc } = require("firebase/firestore");
     const employeeDb = testEnv.authenticatedContext("employee-a").firestore();
@@ -29,6 +40,8 @@ test("Firestore rules enforce attendance ownership and server-only writes", { sk
     await assertFails(setDoc(doc(employeeDb, "attendance/forged"), { userId: "employee-a", department: "工程" }));
     await assertSucceeds(getDoc(doc(testEnv.authenticatedContext("manager-a").firestore(), "attendance/record-a")));
     await assertFails(getDoc(doc(testEnv.authenticatedContext("manager-b").firestore(), "attendance/record-a")));
+    await assertSucceeds(getDoc(doc(testEnv.authenticatedContext("manager-a").firestore(), "leaveRequests/request-a")));
+    await assertFails(getDoc(doc(testEnv.authenticatedContext("manager-b").firestore(), "leaveRequests/request-a")));
     assert.ok(true);
   } finally {
     await testEnv.cleanup();

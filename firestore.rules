@@ -22,13 +22,25 @@ service cloud.firestore {
       return isAdmin() || (isManager() && me().department == department);
     }
 
+    function reviewsEmployee(userId) {
+      return isAdmin() || (isManager()
+        && get(/databases/$(database)/documents/users/$(userId)).data.managerId == request.auth.uid);
+    }
+
+    function reviewsManager(managerId) {
+      return isAdmin() || (isManager() && managerId == request.auth.uid);
+    }
+
     function owns(userId) {
       return signedIn() && request.auth.uid == userId;
     }
 
     match /users/{userId} {
       allow read: if owns(userId) || isAdmin()
-        || (isManager() && resource.data.department == me().department);
+        || (isManager() && (
+          resource.data.department == me().department
+          || resource.data.get('managerId', '') == request.auth.uid
+        ));
       allow create: if owns(userId)
         && request.resource.data.role == 'employee'
         && request.resource.data.department == ''
@@ -57,12 +69,16 @@ service cloud.firestore {
     }
 
     match /attendanceExceptions/{caseId} {
-      allow read: if owns(resource.data.userId) || reviewsDepartment(resource.data.department);
+      allow read: if owns(resource.data.userId)
+        || reviewsManager(resource.data.get('managerId', ''))
+        || reviewsEmployee(resource.data.userId);
       allow write: if false;
     }
 
     match /passkeyEnrollmentRequests/{requestId} {
-      allow read: if owns(resource.data.userId) || reviewsDepartment(resource.data.department);
+      allow read: if owns(resource.data.userId)
+        || reviewsManager(resource.data.get('managerId', ''))
+        || reviewsEmployee(resource.data.userId);
       allow write: if false;
     }
 
@@ -80,7 +96,7 @@ service cloud.firestore {
     }
 
     match /workSites/{siteId} {
-      allow read: if signedIn();
+      allow read: if isAdmin();
       allow write: if false;
     }
 
@@ -91,18 +107,24 @@ service cloud.firestore {
     }
 
     match /leaveRequests/{requestId} {
-      allow read: if owns(resource.data.userId) || reviewsDepartment(resource.data.department);
+      allow read: if owns(resource.data.userId)
+        || reviewsManager(resource.data.get('managerId', ''))
+        || reviewsEmployee(resource.data.userId);
       allow create: if owns(request.resource.data.userId)
         && request.resource.data.department == me().department
+        && request.resource.data.managerId == me().managerId
         && request.resource.data.status == 'pending';
       allow update: if false;
       allow delete: if false;
     }
 
     match /overtimeRequests/{requestId} {
-      allow read: if owns(resource.data.userId) || reviewsDepartment(resource.data.department);
+      allow read: if owns(resource.data.userId)
+        || reviewsManager(resource.data.get('managerId', ''))
+        || reviewsEmployee(resource.data.userId);
       allow create: if owns(request.resource.data.userId)
         && request.resource.data.department == me().department
+        && request.resource.data.managerId == me().managerId
         && request.resource.data.status == 'pending';
       allow update: if false;
       allow delete: if false;

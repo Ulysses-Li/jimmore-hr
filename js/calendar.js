@@ -56,6 +56,11 @@ try {
 }
 const allLeaves = Array.isArray(teamCalendar?.leaves) ? teamCalendar.leaves : [];
 const allLateRecords = Array.isArray(teamCalendar?.lateRecords) ? teamCalendar.lateRecords : [];
+const attendanceSettings = teamCalendar?.attendanceSettings || {
+  lateGraceMinutes: 0,
+  lunchStart: "12:00",
+  lunchEnd: "13:00"
+};
 
 qs("#prevMonthBtn").addEventListener("click", () => {
   visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1);
@@ -93,7 +98,7 @@ function renderCalendarMonth() {
       const date = toDate(item.timestamp);
       return date >= monthStart && date <= monthEnd;
     })
-    .map((item) => ({ ...item, lateMinutes: calculateAdjustedLateMinutes(item, events) }))
+    .map((item) => ({ ...item, ...calculateLateEvidence(item, events) }))
     .filter((item) => item.lateMinutes > 0);
 
   renderLateRankings(lateRecords, monthStart, monthEnd);
@@ -162,10 +167,12 @@ function renderLateRankings(records, monthStart, monthEnd) {
       userName: item.userName || "未命名",
       department: item.department || "-",
       lateCount: 0,
-      lateMinutes: 0
+      lateMinutes: 0,
+      records: []
     };
     current.lateCount += 1;
     current.lateMinutes += item.lateMinutes;
+    current.records.push(item);
     monthly.set(key, current);
   });
 
@@ -182,33 +189,117 @@ function renderLateRankings(records, monthStart, monthEnd) {
 function rankingTable(rows, type) {
   if (!rows.length) return `<div class="muted border rounded p-3">目前沒有遲到紀錄。</div>`;
   const headers = type === "today"
-    ? `<th>#</th><th>員工</th><th>部門</th><th>遲到</th>`
-    : `<th>#</th><th>員工</th><th>部門</th><th>次數</th><th>總分鐘</th>`;
-  const body = rows.map((row, index) => type === "today"
-    ? `<tr><td>${index + 1}</td><td>${row.userName}</td><td>${row.department || "-"}</td><td><span class="badge text-bg-danger">${row.lateMinutes} 分鐘</span></td></tr>`
-    : `<tr><td>${index + 1}</td><td>${row.userName}</td><td>${row.department || "-"}</td><td>${row.lateCount}</td><td><span class="badge text-bg-danger">${row.lateMinutes}</span></td></tr>`
-  ).join("");
+    ? `<th>#</th><th>員工</th><th>部門</th><th>遲到</th><th></th>`
+    : `<th>#</th><th>員工</th><th>部門</th><th>次數</th><th>總分鐘</th><th></th>`;
+  const body = rows.map((row, index) => {
+    const records = type === "today" ? [row] : row.records;
+    const detailId = `lateEvidence_${type}_${index}`;
+    const summary = type === "today"
+      ? `<tr><td>${index + 1}</td><td>${escapeHtml(row.userName)}</td><td>${escapeHtml(row.department || "-")}</td><td><span class="badge text-bg-danger">${row.lateMinutes} 分鐘</span></td>`
+      : `<tr><td>${index + 1}</td><td>${escapeHtml(row.userName)}</td><td>${escapeHtml(row.department || "-")}</td><td>${row.lateCount}</td><td><span class="badge text-bg-danger">${row.lateMinutes}</span></td>`;
+    return `${summary}<td><button class="btn btn-link btn-sm p-0 text-nowrap" type="button"
+      data-bs-toggle="collapse" data-bs-target="#${detailId}" aria-expanded="false"
+      aria-controls="${detailId}">查看依據</button></td></tr>
+      <tr class="collapse late-evidence-row" id="${detailId}"><td colspan="${type === "today" ? 5 : 6}">
+        ${lateEvidenceHtml(records)}
+      </td></tr>`;
+  }).join("");
   return `<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function calculateAdjustedLateMinutes(record, leaveEvents) {
+function calculateLateEvidence(record, leaveEvents) {
   const actual = toDate(record.timestamp);
   const expected = timeToDate(record.date || todayKey(actual), record.workStart || "09:00");
-  const diff = Math.ceil((actual.getTime() - expected.getTime()) / 60000);
-  const rawLateMinutes = Math.max(0, diff);
-  if (!rawLateMinutes) return 0;
-
+  const rawLateMinutes = Math.max(0, Math.ceil((actual.getTime() - expected.getTime()) / 60000));
+  const graceMinutes = Math.max(0, Number(record.lateGraceMinutes ?? attendanceSettings.lateGraceMinutes ?? 0));
+  const lunchStart = timeToDate(record.date || todayKey(actual), attendanceSettings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(record.date || todayKey(actual), attendanceSettings.lunchEnd || "13:00");
   const coveredLeaveMinutes = leaveEvents
     .filter((item) => item.userId === record.userId)
-    .reduce((sum, item) => sum + overlapMinutes(expected, actual, toDate(item.startTime), toDate(item.endTime)), 0);
+    .reduce((sum, item) => sum + workMinutesInRange(
+      expected,
+      actual,
+      toDate(item.startTime),
+      toDate(item.endTime),
+      lunchStart,
+      lunchEnd
+    ), 0);
 
-  return Math.max(0, rawLateMinutes - coveredLeaveMinutes);
+  return {
+    lateMinutes: Math.max(0, rawLateMinutes - graceMinutes - coveredLeaveMinutes),
+    rawLateMinutes,
+    graceMinutes,
+    coveredLeaveMinutes,
+    expectedAt: expected,
+    actualAt: actual
+  };
 }
 
 function overlapMinutes(start, end, blockStart, blockEnd) {
   const from = Math.max(start.getTime(), blockStart.getTime());
   const to = Math.min(end.getTime(), blockEnd.getTime());
   return Math.max(0, Math.ceil((to - from) / 60000));
+}
+
+function workMinutesInRange(start, end, blockStart, blockEnd, lunchStart, lunchEnd) {
+  const minutes = overlapMinutes(start, end, blockStart, blockEnd);
+  const lunchFrom = new Date(Math.max(start.getTime(), lunchStart.getTime()));
+  const lunchTo = new Date(Math.min(end.getTime(), lunchEnd.getTime()));
+  const lunchMinutes = lunchTo > lunchFrom
+    ? overlapMinutes(lunchFrom, lunchTo, blockStart, blockEnd)
+    : 0;
+  return Math.max(0, minutes - lunchMinutes);
+}
+
+function lateEvidenceHtml(records) {
+  return `<div class="late-evidence-list">${records
+    .sort((a, b) => toDate(b.timestamp) - toDate(a.timestamp))
+    .map((record) => `<article class="late-evidence-card">
+      <div class="late-evidence-head">
+        <strong>${escapeHtml(record.date || "-")}</strong>
+        <span>${escapeHtml(record.shiftName || "班別")} · 上班 ${escapeHtml(record.workStart || "09:00")}</span>
+        <span class="badge text-bg-danger">${record.lateMinutes} 分鐘</span>
+      </div>
+      <div class="late-evidence-grid">
+        <div><span>實際簽到</span><strong>${formatTime(record.actualAt)}</strong></div>
+        <div><span>原始差額</span><strong>${record.rawLateMinutes} 分鐘</strong></div>
+        <div><span>寬限扣除</span><strong>${record.graceMinutes} 分鐘</strong></div>
+        <div><span>請假扣除</span><strong>${record.coveredLeaveMinutes} 分鐘</strong></div>
+      </div>
+      <div class="late-evidence-formula">${record.rawLateMinutes} − ${record.graceMinutes} − ${record.coveredLeaveMinutes} = <strong>${record.lateMinutes} 分鐘</strong></div>
+      <div class="late-evidence-meta">
+        <span>來源：${sourceLabel(record.source)}</span>
+        ${record.correctionReason ? `<span>補登原因：${escapeHtml(record.correctionReason)}</span>` : ""}
+        ${record.correctedByName ? `<span>補登人：${escapeHtml(record.correctedByName)}</span>` : ""}
+        <span>紀錄編號：${escapeHtml(record.id || "-")}</span>
+        ${record.graceSource === "current_settings" ? `<span>註：舊紀錄使用目前系統寬限設定</span>` : ""}
+      </div>
+    </article>`).join("")}</div>`;
+}
+
+function sourceLabel(source) {
+  return ({
+    passkey_web: "Passkey 生物辨識打卡",
+    admin_manual_correction: "管理員補登",
+    manager_approved_exception: "主管核准補登"
+  })[source] || source || "系統打卡紀錄";
+}
+
+function formatTime(value) {
+  const date = toDate(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("zh-TW", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+  })[char]);
 }
 
 function startOfMonth(date) {

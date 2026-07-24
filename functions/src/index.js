@@ -77,10 +77,12 @@ exports.getEmployeeDirectory = callable(async function getEmployeeDirectory(requ
 
 exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
   await profileFor(request.auth.uid);
-  const [leaveSnap, attendanceSnap] = await Promise.all([
+  const [leaveSnap, attendanceSnap, settingsSnap] = await Promise.all([
     db.collection("leaveRequests").where("status", "==", "approved").get(),
-    db.collection("attendance").where("type", "==", "checkIn").where("status", "==", "late").get()
+    db.collection("attendance").where("type", "==", "checkIn").where("status", "==", "late").get(),
+    db.doc("workSettings/default").get()
   ]);
+  const settings = settingsSnap.exists ? settingsSnap.data() : {};
   const toIso = (value) => {
     const date = timestampDate(value);
     return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
@@ -97,17 +99,36 @@ exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
     }))
     .filter((leave) => leave.startTime && leave.endTime);
   const lateRecords = attendanceSnap.docs
-    .map((docSnap) => docSnap.data())
+    .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
     .map((record) => ({
+      id: cleanText(record.id, 128),
       userId: cleanText(record.userId, 128),
       userName: cleanText(record.userName, 100),
       department: cleanText(record.department, 100),
       date: cleanText(record.date, 10),
+      shiftName: cleanText(record.shiftName, 100),
       workStart: cleanText(record.workStart, 5),
-      timestamp: toIso(record.timestamp)
+      timestamp: toIso(record.timestamp),
+      lateGraceMinutes: Number.isFinite(Number(record.lateGraceMinutes))
+        ? Number(record.lateGraceMinutes)
+        : Number(settings.lateGraceMinutes || 0),
+      graceSource: Number.isFinite(Number(record.lateGraceMinutes)) ? "record" : "current_settings",
+      source: cleanText(record.source, 80),
+      locationDecision: cleanText(record.locationDecision, 80),
+      manualCorrection: record.manualCorrection === true,
+      correctionReason: cleanText(record.correctionReason, 500),
+      correctedByName: cleanText(record.correctedByName, 100)
     }))
     .filter((record) => record.timestamp);
-  return { leaves, lateRecords };
+  return {
+    leaves,
+    lateRecords,
+    attendanceSettings: {
+      lateGraceMinutes: Number(settings.lateGraceMinutes || 0),
+      lunchStart: cleanText(settings.lunchStart, 5) || "12:00",
+      lunchEnd: cleanText(settings.lunchEnd, 5) || "13:00"
+    }
+  };
 }, { enforceAppCheck: false });
 
 function normalizedShift(profile, settings) {
@@ -446,6 +467,7 @@ exports.finishPunch = callable(async function finishPunch(request) {
       shiftName: shift.name,
       workStart: shift.workStart,
       workEnd: shift.workEnd,
+      lateGraceMinutes: Number(settings.lateGraceMinutes || 0),
       timestamp: Timestamp.fromDate(now),
       serverReceivedAt: FieldValue.serverTimestamp(),
       date,
@@ -568,6 +590,7 @@ exports.reviewException = callable(async function reviewException(request) {
         shiftName: shift.name,
         workStart: shift.workStart,
         workEnd: shift.workEnd,
+        lateGraceMinutes: Number(settings.lateGraceMinutes || 0),
         timestamp: Timestamp.fromDate(timestamp),
         serverReceivedAt: FieldValue.serverTimestamp(),
         date: exception.date,
@@ -701,6 +724,7 @@ exports.createManualCorrection = callable(async function createManualCorrection(
     shiftName: shift.name,
     workStart: shift.workStart,
     workEnd: shift.workEnd,
+    lateGraceMinutes: Number(settings.lateGraceMinutes || 0),
     timestamp: Timestamp.fromDate(timestamp),
     serverReceivedAt: FieldValue.serverTimestamp(),
     date,

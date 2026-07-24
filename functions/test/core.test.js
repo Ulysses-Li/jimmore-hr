@@ -6,6 +6,7 @@ const {
   calculateHoursExcludingLunch,
   calculateWorkHours,
   decideLocation,
+  earliestCheckInsByUserDate,
   haversineMeters,
   isRestDay,
   resolvePunchStatus,
@@ -77,6 +78,19 @@ test("overtime hours deduct configured lunch overlap", () => {
       settings
     ),
     3
+  );
+});
+
+test("late ranking uses only the earliest check-in for each employee and date", () => {
+  const records = [
+    { id: "return", userId: "u1", date: "2026-07-13", type: "checkIn", timestamp: new Date("2026-07-13T02:59:00Z") },
+    { id: "first", userId: "u1", date: "2026-07-13", type: "checkIn", timestamp: new Date("2026-07-13T00:58:00Z") },
+    { id: "other-day", userId: "u1", date: "2026-07-14", type: "checkIn", timestamp: new Date("2026-07-14T01:05:00Z") },
+    { id: "other-user", userId: "u2", date: "2026-07-13", type: "checkIn", timestamp: new Date("2026-07-13T01:10:00Z") }
+  ];
+  assert.deepEqual(
+    earliestCheckInsByUserDate(records).map((record) => record.id).sort(),
+    ["first", "other-day", "other-user"]
   );
 });
 

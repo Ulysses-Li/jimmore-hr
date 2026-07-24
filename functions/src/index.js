@@ -24,6 +24,7 @@ const {
   calculateWorkHours,
   decideLocation,
   effectiveWorkEnd,
+  earliestCheckInsByUserDate,
   isRestDay,
   taipeiDateTime,
   todayKeyTaipei
@@ -79,7 +80,7 @@ exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
   await profileFor(request.auth.uid);
   const [leaveSnap, attendanceSnap, settingsSnap] = await Promise.all([
     db.collection("leaveRequests").where("status", "==", "approved").get(),
-    db.collection("attendance").where("type", "==", "checkIn").where("status", "==", "late").get(),
+    db.collection("attendance").where("type", "==", "checkIn").get(),
     db.doc("workSettings/default").get()
   ]);
   const settings = settingsSnap.exists ? settingsSnap.data() : {};
@@ -98,8 +99,8 @@ exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
       endTime: toIso(leave.endTime)
     }))
     .filter((leave) => leave.startTime && leave.endTime);
-  const lateRecords = attendanceSnap.docs
-    .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+  const lateRecords = earliestCheckInsByUserDate(attendanceSnap.docs
+    .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })))
     .map((record) => ({
       id: cleanText(record.id, 128),
       userId: cleanText(record.userId, 128),
@@ -447,7 +448,11 @@ exports.finishPunch = callable(async function finishPunch(request) {
       ? "定位精度不足，請移至可接收 GPS 的位置後重試。" : "目前位置不在公司據點或核准外勤範圍內。");
   }
   const approvedLeaves = await approvedLeavesForDate(employee.id, date);
-  const status = resolveStatusWithLeaves(challenge.punchType, now, date, shift, settings, approvedLeaves);
+  const hasEarlierCheckIn = challenge.punchType === "checkIn"
+    && rows.some((row) => row.type === "checkIn" && timestampDate(row.timestamp) <= now);
+  const status = hasEarlierCheckIn
+    ? "normal"
+    : resolveStatusWithLeaves(challenge.punchType, now, date, shift, settings, approvedLeaves);
   const exceptionRef = db.doc(`attendanceExceptions/${date}_${employee.id}`);
   const exceptionSnap = await exceptionRef.get();
   const recordRef = db.collection("attendance").doc();
@@ -711,8 +716,15 @@ exports.createManualCorrection = callable(async function createManualCorrection(
   const settingsSnap = await db.doc("workSettings/default").get();
   const settings = settingsSnap.exists ? settingsSnap.data() : {};
   const shift = normalizedShift(employee, settings);
-  const approvedLeaves = await approvedLeavesForDate(employee.id, date);
-  const status = resolveStatusWithLeaves(type, timestamp, date, shift, settings, approvedLeaves);
+  const [approvedLeaves, existingRows] = await Promise.all([
+    approvedLeavesForDate(employee.id, date),
+    recordsForDate(employee.id, date)
+  ]);
+  const hasEarlierCheckIn = type === "checkIn"
+    && existingRows.some((row) => row.type === "checkIn" && timestampDate(row.timestamp) <= timestamp);
+  const status = hasEarlierCheckIn
+    ? "normal"
+    : resolveStatusWithLeaves(type, timestamp, date, shift, settings, approvedLeaves);
   const ref = db.collection("attendance").doc();
   const exceptionId = cleanText(data.exceptionId, 128) || null;
   await ref.set({

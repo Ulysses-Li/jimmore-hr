@@ -188,12 +188,28 @@ function calculateHoursExcludingLunch(startValue, endValue, settings = {}) {
   return Number((Math.max(0, grossMinutes - lunchMinutes) / 60).toFixed(2));
 }
 
+function earliestCheckInsByUserDate(records) {
+  const earliest = new Map();
+  for (const record of records) {
+    if (record.type && record.type !== "checkIn") continue;
+    const timestamp = record.timestamp?.toDate ? record.timestamp.toDate() : new Date(record.timestamp);
+    if (!record.userId || !record.date || Number.isNaN(timestamp.getTime())) continue;
+    const key = `${record.userId}_${record.date}`;
+    const current = earliest.get(key);
+    if (!current || timestamp < current.timestampDate) {
+      earliest.set(key, { ...record, timestampDate: timestamp });
+    }
+  }
+  return Array.from(earliest.values());
+}
+
 module.exports = {
   attendanceRanges,
   calculateHoursExcludingLunch,
   calculateWorkHours,
   decideLocation,
   effectiveWorkEnd,
+  earliestCheckInsByUserDate,
   haversineMeters,
   isRestDay,
   resolvePunchStatus,

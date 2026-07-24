@@ -501,8 +501,10 @@ exports.submitExceptionReason = callable(async function submitExceptionReason(re
   const caseId = cleanText(request.data?.caseId, 128);
   const category = cleanText(request.data?.category, 40);
   const reason = cleanText(request.data?.reason, 1000);
-  if (!caseId || !["forgot", "device_failure", "fieldwork", "leave_pending", "other"].includes(category) || !reason) {
-    throw new HttpsError("invalid-argument", "請選擇原因分類並填寫說明。");
+  const requestedTime = cleanText(request.data?.requestedTime, 5);
+  if (!caseId || !["forgot", "device_failure", "fieldwork", "leave_pending", "other"].includes(category)
+    || !reason || !/^\d{2}:\d{2}$/.test(requestedTime)) {
+    throw new HttpsError("invalid-argument", "請選擇原因分類，並填寫實際到達時間與說明。");
   }
   const ref = db.doc(`attendanceExceptions/${caseId}`);
   const snap = await ref.get();
@@ -510,6 +512,7 @@ exports.submitExceptionReason = callable(async function submitExceptionReason(re
   await ref.update({
     reasonCategory: category,
     reason,
+    requestedTime,
     status: "pending_manager_review",
     submittedAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -528,12 +531,72 @@ exports.reviewException = callable(async function reviewException(request) {
   const ref = db.doc(`attendanceExceptions/${caseId}`);
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError("not-found", "找不到未打卡案件。");
-  const employee = await profileFor(snap.data().userId);
+  const exception = snap.data();
+  const employee = await profileFor(exception.userId);
   requireReviewer(reviewer, employee);
   const status = decision === "needs_more_info" ? "needs_more_info" : decision;
+  let correctionRecordId = exception.manualCorrectionRecordId || "";
+  let correctionTime = "";
+  if (decision === "approved") {
+    correctionTime = cleanText(request.data?.correctionTime, 5)
+      || cleanText(exception.requestedTime, 5)
+      || timeMentionedInReason(exception.reason)
+      || cleanText(exception.workStart, 5)
+      || "09:00";
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(correctionTime)) {
+      throw new HttpsError("invalid-argument", "補登時間格式不正確。");
+    }
+    const rows = await recordsForDate(employee.id, exception.date);
+    const existingCheckIn = rows.find((row) => row.type === "checkIn");
+    if (existingCheckIn) {
+      correctionRecordId = existingCheckIn.id;
+    } else {
+      const settingsSnap = await db.doc("workSettings/default").get();
+      const settings = settingsSnap.exists ? settingsSnap.data() : {};
+      const shift = normalizedShift(employee, settings);
+      const timestamp = taipeiDateTime(exception.date, correctionTime);
+      const approvedLeaves = await approvedLeavesForDate(employee.id, exception.date);
+      const correctionRef = db.doc(`attendance/exception_${caseId}_checkIn`);
+      correctionRecordId = correctionRef.id;
+      await correctionRef.set({
+        userId: employee.id,
+        userName: employee.name || employee.email || "",
+        department: employee.department || "",
+        type: "checkIn",
+        shiftId: shift.id,
+        shiftName: shift.name,
+        workStart: shift.workStart,
+        workEnd: shift.workEnd,
+        timestamp: Timestamp.fromDate(timestamp),
+        serverReceivedAt: FieldValue.serverTimestamp(),
+        date: exception.date,
+        latitude: null,
+        longitude: null,
+        locationDecision: "manager_approved_exception",
+        status: resolveStatusWithLeaves("checkIn", timestamp, exception.date, shift, settings, approvedLeaves),
+        source: "manager_approved_exception",
+        manualCorrection: true,
+        correctionReason: exception.reason || note || "主管核准未打卡原因",
+        correctedBy: reviewer.id,
+        correctedByName: reviewer.name || reviewer.email || "",
+        exceptionId: caseId,
+        createdAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      await rebuildAttendanceDaily(employee, exception.date, settings);
+      await audit("attendance.manager_correction", reviewer, {
+        targetUserId: employee.id,
+        department: employee.department,
+        recordId: correctionRecordId,
+        date: exception.date,
+        time: correctionTime,
+        caseId
+      });
+    }
+  }
   await ref.update({
     status,
     reviewNote: note,
+    ...(decision === "approved" ? { requestedTime: correctionTime, manualCorrectionRecordId: correctionRecordId } : {}),
     reviewedBy: reviewer.id,
     reviewedByName: reviewer.name || reviewer.email || "",
     reviewedAt: FieldValue.serverTimestamp(),
@@ -543,6 +606,11 @@ exports.reviewException = callable(async function reviewException(request) {
   await audit("attendance_exception.reviewed", reviewer, { targetUserId: employee.id, department: employee.department, caseId, decision, note });
   return { status };
 });
+
+function timeMentionedInReason(reason) {
+  const match = String(reason || "").match(/(?:^|\D)([01]?\d|2[0-3])[:：]([0-5]\d)(?:\D|$)/);
+  return match ? `${String(match[1]).padStart(2, "0")}:${match[2]}` : "";
+}
 
 exports.saveWorkSite = callable(async function saveWorkSite(request) {
   const admin = await profileFor(request.auth.uid);

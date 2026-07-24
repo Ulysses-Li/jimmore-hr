@@ -49,8 +49,10 @@ function createSecurityRuntime(db) {
 
   function reviewerCanAccess(reviewer, employee) {
     return reviewer.role === "admin"
-      || (reviewer.role === "manager" && reviewer.department
-        && reviewer.department === employee.department);
+      || (reviewer.role === "manager" && (
+        employee.managerId === reviewer.id
+        || (reviewer.department && reviewer.department === employee.department)
+      ));
   }
 
   function requireAdmin(profile) {

@@ -97,6 +97,7 @@ async function renderAttendanceSecurity(profile, content) {
 
 function caseHtml(row, profile) {
   const pendingReview = row.status === "pending_manager_review";
+  const correctionTime = row.requestedTime || timeMentionedInReason(row.reason) || row.workStart || "09:00";
   return `<section class="border rounded p-3 mb-2" data-review-case="${escapeHtml(row.id)}">
     <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
       <div>
@@ -109,12 +110,17 @@ function caseHtml(row, profile) {
     ${row.laterPunchAt ? `<div class="small"><strong>後續打卡：</strong>${fmtDateTime(row.laterPunchAt)}（${row.laterPunchType === "checkIn" ? "簽到" : "簽退"}）</div>` : ""}
     ${row.reviewNote ? `<div class="small"><strong>審核備註：</strong>${escapeHtml(row.reviewNote)}</div>` : ""}
     ${pendingReview ? `<div class="row g-2 mt-1">
-      <div class="col-md-7"><input class="form-control form-control-sm" data-review-note placeholder="審核備註或要求補充內容"></div>
+      <div class="col-md-2"><input class="form-control form-control-sm" type="time" data-correction-time value="${escapeHtml(correctionTime)}" aria-label="補登簽到時間"></div>
+      <div class="col-md-5"><input class="form-control form-control-sm" data-review-note placeholder="審核備註或要求補充內容"></div>
       <div class="col-md-5 d-flex gap-1 flex-wrap">
-        <button class="btn btn-sm btn-success" data-review-decision="approved">核准原因</button>
+        <button class="btn btn-sm btn-success" data-review-decision="approved">核准並補登</button>
         <button class="btn btn-sm btn-outline-warning" data-review-decision="needs_more_info">要求補充</button>
         <button class="btn btn-sm btn-outline-danger" data-review-decision="rejected">駁回</button>
       </div>
+    </div>` : ""}
+    ${row.status === "approved" && !row.manualCorrectionRecordId ? `<div class="d-flex gap-2 align-items-center mt-2" data-approved-repair>
+      <input class="form-control form-control-sm" style="max-width: 9rem" type="time" value="${escapeHtml(correctionTime)}" aria-label="補回簽到時間">
+      <button class="btn btn-sm btn-outline-primary" type="button" data-repair-approved>補回出勤表</button>
     </div>` : ""}
     ${profile.role === "admin" && ["approved", "rejected", "overdue", "pending_manager_review"].includes(row.status) ? manualCorrectionHtml(row) : ""}
   </section>`;
@@ -132,6 +138,11 @@ function manualCorrectionHtml(row) {
   </details>`;
 }
 
+function timeMentionedInReason(reason) {
+  const match = String(reason || "").match(/(?:^|\D)([01]?\d|2[0-3])[:：]([0-5]\d)(?:\D|$)/);
+  return match ? `${String(match[1]).padStart(2, "0")}:${match[2]}` : "";
+}
+
 function bindCaseReviews(host) {
   host.querySelectorAll("[data-review-decision]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -142,14 +153,39 @@ function bindCaseReviews(host) {
         await callSecureFunction("reviewException", {
           caseId: card.dataset.reviewCase,
           decision: button.dataset.reviewDecision,
-          note: card.querySelector("[data-review-note]").value.trim()
+          note: card.querySelector("[data-review-note]").value.trim(),
+          correctionTime: card.querySelector("[data-correction-time]")?.value || ""
         });
-        showToast("審核結果已記錄", "success");
+        showToast(button.dataset.reviewDecision === "approved" ? "已核准並補回出勤表" : "審核結果已記錄", "success");
+        if (button.dataset.reviewDecision === "approved") {
+          location.reload();
+          return;
+        }
         card.querySelector(".badge").textContent = statusLabels[button.dataset.reviewDecision] || button.dataset.reviewDecision;
         card.querySelector(".row")?.remove();
       } catch (error) {
         showToast(error.message, "danger");
         buttons.forEach((item) => { item.disabled = false; });
+      }
+    });
+  });
+  host.querySelectorAll("[data-repair-approved]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const card = button.closest("[data-review-case]");
+      const repair = button.closest("[data-approved-repair]");
+      button.disabled = true;
+      try {
+        await callSecureFunction("reviewException", {
+          caseId: card.dataset.reviewCase,
+          decision: "approved",
+          note: "補回已核准的出勤紀錄",
+          correctionTime: repair.querySelector("input[type=time]").value
+        });
+        showToast("已補回出勤表並重新計算月報", "success");
+        location.reload();
+      } catch (error) {
+        showToast(error.message, "danger");
+        button.disabled = false;
       }
     });
   });

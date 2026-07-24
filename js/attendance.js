@@ -552,7 +552,7 @@ async function renderExceptions() {
       ${row.reviewNote ? `<div class="alert alert-light py-2 small">主管回覆：${escapeHtml(row.reviewNote)}</div>` : ""}
       ${editable ? `<form data-exception-form>
         <div class="row g-2">
-          <div class="col-md-4"><select class="form-select form-select-sm" name="category" required>
+          <div class="col-md-3"><select class="form-select form-select-sm" name="category" required>
             <option value="">選擇原因</option>
             <option value="forgot">忘記打卡</option>
             <option value="device_failure">裝置／Passkey 故障</option>
@@ -560,7 +560,8 @@ async function renderExceptions() {
             <option value="leave_pending">請假尚待核准</option>
             <option value="other">其他</option>
           </select></div>
-          <div class="col-md-6"><input class="form-control form-control-sm" name="reason" maxlength="1000" placeholder="請說明未打卡原因跟實際到達時間" value="${escapeHtml(row.reason || "")}" required></div>
+          <div class="col-md-2"><input class="form-control form-control-sm" type="time" name="requestedTime" value="${escapeHtml(row.requestedTime || row.workStart || "09:00")}" aria-label="實際到達時間" required></div>
+          <div class="col-md-5"><input class="form-control form-control-sm" name="reason" maxlength="1000" placeholder="請說明未打卡原因" value="${escapeHtml(row.reason || "")}" required></div>
           <div class="col-md-2 d-grid"><button class="btn btn-sm btn-primary">送主管審核</button></div>
         </div>
       </form>` : `<div class="small">${escapeHtml(row.reason || "尚無說明")}</div>`}
@@ -577,6 +578,7 @@ async function renderExceptions() {
         await callSecureFunction("submitExceptionReason", {
           caseId: card.dataset.caseId,
           category: form.elements.category.value,
+          requestedTime: form.elements.requestedTime.value,
           reason: form.elements.reason.value.trim()
         });
         showToast("原因已送交主管審核", "success");

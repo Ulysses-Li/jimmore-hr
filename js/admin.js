@@ -549,24 +549,26 @@ function todayMissingAttendanceHtml(users, today, settings) {
   }
   return `
     <div class="panel p-3 mb-3">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-          <h2 class="h5 mb-1">今日尚未打卡人員</h2>
-          <div class="small muted">${today}，供人事主管關切未簽到原因</div>
-        </div>
-        <span class="badge ${users.length ? "text-bg-warning" : "text-bg-success"}">${users.length ? `${users.length} 人` : "全員已簽到"}</span>
-      </div>
-      <div class="table-responsive"><table class="table align-middle mb-0">
-        <thead><tr><th>姓名</th><th>Email</th><th>部門</th><th>角色</th><th>班別</th><th>上班時間</th></tr></thead>
-        <tbody>${users.length ? users.map((user) => `<tr>
-          <td>${user.name || "-"}</td>
-          <td>${user.email || "-"}</td>
-          <td>${user.department || "未分部門"}</td>
-          <td>${roleLabels[user.role] || user.role || "-"}</td>
-          <td>${user.shiftName}</td>
-          <td>${user.workStart}</td>
-        </tr>`).join("") : `<tr><td colspan="6" class="muted">今天沒有尚未打卡人員</td></tr>`}</tbody>
-      </table></div>
+      <details>
+        <summary class="d-flex justify-content-between align-items-center" style="cursor:pointer">
+          <div>
+            <h2 class="h5 mb-1">今日尚未打卡人員</h2>
+            <div class="small muted">${today}，供人事主管關切未簽到原因</div>
+          </div>
+          <span class="badge ${users.length ? "text-bg-warning" : "text-bg-success"}">${users.length ? `${users.length} 人 · 展開` : "全員已簽到 · 展開"}</span>
+        </summary>
+        <div class="table-responsive mt-3"><table class="table align-middle mb-0">
+          <thead><tr><th>姓名</th><th>Email</th><th>部門</th><th>角色</th><th>班別</th><th>上班時間</th></tr></thead>
+          <tbody>${users.length ? users.map((user) => `<tr>
+            <td>${user.name || "-"}</td>
+            <td>${user.email || "-"}</td>
+            <td>${user.department || "未分部門"}</td>
+            <td>${roleLabels[user.role] || user.role || "-"}</td>
+            <td>${user.shiftName}</td>
+            <td>${user.workStart}</td>
+          </tr>`).join("") : `<tr><td colspan="6" class="muted">今天沒有尚未打卡人員</td></tr>`}</tbody>
+        </table></div>
+      </details>
     </div>`;
 }
 

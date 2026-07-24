@@ -24,16 +24,16 @@ qs("#pageContent").innerHTML = `
   </div>
   <div class="panel p-3 mt-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
-      <h2 class="h5 mb-0">MVP 遲到王</h2>
+      <h2 class="h5 mb-0">遲到統計</h2>
       <span class="badge text-bg-warning">出勤統計</span>
     </div>
     <div class="row g-3">
       <div class="col-lg-6">
-        <h3 class="h6 mb-2">今日排名</h3>
+        <h3 class="h6 mb-2">今日</h3>
         <div id="todayLateRanking"></div>
       </div>
       <div class="col-lg-6">
-        <h3 class="h6 mb-2">本月排名</h3>
+        <h3 class="h6 mb-2">本月</h3>
         <div id="monthLateRanking"></div>
       </div>
     </div>

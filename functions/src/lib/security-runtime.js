@@ -25,8 +25,8 @@ function createSecurityRuntime(db) {
     });
   }
 
-  function callable(handler) {
-    return onCall(CALLABLE_OPTIONS, async (request) => {
+  function callable(handler, optionOverrides = {}) {
+    return onCall({ ...CALLABLE_OPTIONS, ...optionOverrides }, async (request) => {
       if (!request.auth?.uid) throw new HttpsError("unauthenticated", "請先登入。");
       try {
         await enforceRateLimit(request.auth.uid, handler.name || "callable", 30);

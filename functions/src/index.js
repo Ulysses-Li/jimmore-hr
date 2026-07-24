@@ -111,7 +111,7 @@ exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
     }))
     .filter((record) => record.timestamp);
   return { leaves, lateRecords };
-});
+}, { enforceAppCheck: false });
 
 function normalizedShift(profile, settings) {
   const shifts = Array.isArray(settings.workShifts) ? settings.workShifts : [];

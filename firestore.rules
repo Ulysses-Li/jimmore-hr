@@ -59,12 +59,16 @@ service cloud.firestore {
     }
 
     match /attendance/{recordId} {
-      allow read: if owns(resource.data.userId) || reviewsDepartment(resource.data.department);
+      allow read: if owns(resource.data.userId)
+        || reviewsDepartment(resource.data.department)
+        || reviewsEmployee(resource.data.userId);
       allow write: if false;
     }
 
     match /attendanceDaily/{recordId} {
-      allow read: if owns(resource.data.userId) || reviewsDepartment(resource.data.department);
+      allow read: if owns(resource.data.userId)
+        || reviewsDepartment(resource.data.department)
+        || reviewsEmployee(resource.data.userId);
       allow write: if false;
     }
 

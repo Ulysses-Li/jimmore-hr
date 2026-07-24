@@ -41,11 +41,38 @@ bindLogout();
 
 const content = qs("#pageContent");
 
-function reviewerCollection(collectionName, ...adminConstraints) {
-  if (adminProfile.role === "admin") {
-    return adminConstraints.length ? query(collection(db, collectionName), ...adminConstraints) : collection(db, collectionName);
+let managedUsersPromise;
+
+function managedUsersSnapshot() {
+  if (!managedUsersPromise) {
+    managedUsersPromise = getDocs(query(
+      collection(db, "users"),
+      where("managerId", "==", adminProfile.id)
+    ));
   }
-  return query(collection(db, collectionName), where("department", "==", adminProfile.department || ""));
+  return managedUsersPromise;
+}
+
+async function getReviewerDocs(collectionName, ...adminConstraints) {
+  if (adminProfile.role === "admin") {
+    const source = adminConstraints.length
+      ? query(collection(db, collectionName), ...adminConstraints)
+      : collection(db, collectionName);
+    return getDocs(source);
+  }
+  if (collectionName === "users") return managedUsersSnapshot();
+  if (["leaveRequests", "overtimeRequests"].includes(collectionName)) {
+    return getDocs(query(collection(db, collectionName), where("managerId", "==", adminProfile.id)));
+  }
+  if (["attendance", "attendanceDaily"].includes(collectionName)) {
+    const managedUsers = await managedUsersSnapshot();
+    const snapshots = await Promise.all(managedUsers.docs.map((user) => (
+      getDocs(query(collection(db, collectionName), where("userId", "==", user.id)))
+    )));
+    const docs = snapshots.flatMap((snapshot) => snapshot.docs);
+    return { docs, size: docs.length };
+  }
+  return getDocs(query(collection(db, collectionName), where("department", "==", adminProfile.department || "")));
 }
 
 try {
@@ -74,13 +101,12 @@ try {
 
 async function renderHome() {
   const [users, leavePending, overtimePending, attendance] = await Promise.all([
-    getDocs(reviewerCollection("users")),
-    getDocs(reviewerCollection("leaveRequests", where("status", "==", "pending"))),
-    getDocs(reviewerCollection("overtimeRequests", where("status", "==", "pending"))),
-    getDocs(reviewerCollection("attendanceDaily"))
+    getReviewerDocs("users"),
+    getReviewerDocs("leaveRequests", where("status", "==", "pending")),
+    getReviewerDocs("overtimeRequests", where("status", "==", "pending")),
+    getReviewerDocs("attendanceDaily")
   ]);
-  const userRows = users.docs.map((item) => ({ id: item.id, ...item.data() }))
-    .filter((user) => adminProfile.role === "admin" || user.department === adminProfile.department);
+  const userRows = users.docs.map((item) => ({ id: item.id, ...item.data() }));
   const usersById = Object.fromEntries(userRows.map((user) => [user.id, user]));
   const visibleLeavePending = leavePending.docs
     .map((item) => ({ id: item.id, ...item.data() }))
@@ -114,7 +140,7 @@ async function renderEmployees() {
     return;
   }
   const [snap, settings] = await Promise.all([
-    getDocs(reviewerCollection("users")),
+    getReviewerDocs("users"),
     getWorkSettings()
   ]);
   const shifts = normalizeWorkShifts(settings);
@@ -360,14 +386,13 @@ function buildDepartmentOptions(users) {
 
 async function renderAttendanceReport() {
   const [usersSnap, attendanceSnap, leaveSnap, settings] = await Promise.all([
-    getDocs(reviewerCollection("users")),
-    getDocs(reviewerCollection("attendance")),
-    getDocs(reviewerCollection("leaveRequests")),
+    getReviewerDocs("users"),
+    getReviewerDocs("attendance"),
+    getReviewerDocs("leaveRequests"),
     getWorkSettings()
   ]);
   const users = usersSnap.docs
     .map((item) => ({ id: item.id, ...item.data() }))
-    .filter((user) => adminProfile.role === "admin" || user.department === adminProfile.department)
     .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
   const usersById = Object.fromEntries(users.map((item) => [item.id, item]));
   const departments = Array.from(new Set(users.map((user) => user.department || "未分部門"))).sort((a, b) => a.localeCompare(b, "zh-Hant"));
@@ -1632,8 +1657,8 @@ function dateKeyFromTimestamp(value) {
 async function renderRequests(collectionName) {
   const isLeave = collectionName === "leaveRequests";
   const [snap, usersSnap] = await Promise.all([
-    getDocs(reviewerCollection(collectionName)),
-    getDocs(reviewerCollection("users"))
+    getReviewerDocs(collectionName),
+    getReviewerDocs("users")
   ]);
   const users = usersSnap.docs.map((item) => ({ id: item.id, ...item.data() }));
   const usersById = Object.fromEntries(users.map((user) => [user.id, user]));

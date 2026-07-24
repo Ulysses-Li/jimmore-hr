@@ -28,9 +28,7 @@ export async function renderSecurityAdmin(mode, profile, content) {
 
 function scopedQuery(name, profile, extra = null) {
   if (profile.role === "admin") return extra ? query(collection(db, name), extra) : collection(db, name);
-  const filters = [where("department", "==", profile.department || "")];
-  if (extra) filters.push(extra);
-  return query(collection(db, name), ...filters);
+  return query(collection(db, name), where("managerId", "==", profile.id));
 }
 
 async function renderAttendanceSecurity(profile, content) {
@@ -40,7 +38,10 @@ async function renderAttendanceSecurity(profile, content) {
   ]);
   const cases = casesSnap.docs.map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const enrollments = enrollmentsSnap.docs.map((item) => ({ id: item.id, ...item.data() }));
+  const enrollments = enrollmentsSnap.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((item) => item.status === "pending");
+  const pendingReviewCount = cases.filter((item) => item.status === "pending_manager_review").length;
   const host = document.createElement("div");
   host.id = "attendanceSecurityPanel";
   host.innerHTML = `
@@ -59,11 +60,22 @@ async function renderAttendanceSecurity(profile, content) {
       </table></div>
     </div>
     <div class="panel p-3 mb-3">
-      <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
-        <div><h2 class="h5 mb-1">未打卡原因與審核</h2><div class="small muted">補打卡不會刪除案件，原因與審核歷程會永久保留。</div></div>
-        <span class="badge text-bg-secondary">${cases.length} 筆</span>
+      <div class="d-flex justify-content-between align-items-center gap-3">
+        <div>
+          <h2 class="h5 mb-1">未打卡原因與審核</h2>
+          <div class="small muted">預設收合；需要追蹤或審核時再展開。</div>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-2" type="button"
+          data-bs-toggle="collapse" data-bs-target="#securityCaseCollapse"
+          aria-expanded="false" aria-controls="securityCaseCollapse">
+          ${pendingReviewCount ? `<span class="badge text-bg-warning">${pendingReviewCount} 筆待審</span>` : ""}
+          <span>${cases.length} 筆紀錄</span>
+          <span aria-hidden="true">展開</span>
+        </button>
       </div>
-      <div id="securityCaseList">${cases.length ? cases.slice(0, 100).map((row) => caseHtml(row, profile)).join("") : `<div class="muted">目前沒有未打卡案件</div>`}</div>
+      <div class="collapse" id="securityCaseCollapse">
+        <div class="pt-3" id="securityCaseList">${cases.length ? cases.slice(0, 100).map((row) => caseHtml(row, profile)).join("") : `<div class="muted">目前沒有未打卡案件</div>`}</div>
+      </div>
     </div>`;
   content.insertBefore(host, content.firstChild);
 

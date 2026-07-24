@@ -1,0 +1,20 @@
+{
+  "name": "jimmore-workhub-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5500",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 5500",
+    "check": "npm run build && npm --prefix functions run lint && npm --prefix functions test"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "^13.2.2",
+    "bootstrap": "5.3.3",
+    "firebase": "^11.0.0"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

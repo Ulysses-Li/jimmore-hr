@@ -1,0 +1,25 @@
+{
+  "name": "jimmore-hr-functions",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "node --check src/index.js && node --check src/core.js && node --check src/config.js && node --check src/lib/security-runtime.js && node --check src/lib/admin-service.js",
+    "emulators": "firebase emulators:start --only auth,firestore,functions,hosting"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.2.2",
+    "firebase-admin": "^13.4.0",
+    "firebase-functions": "^6.4.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.0.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}

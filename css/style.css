@@ -19,6 +19,8 @@ body {
 }
 
 .app-shell {
+  display: flex;
+  width: 100%;
   min-height: 100vh;
 }
 
@@ -371,7 +373,7 @@ body {
 
 @media (max-width: 900px) {
   .app-shell {
-    display: block !important;
+    display: block;
   }
 
   .sidebar {

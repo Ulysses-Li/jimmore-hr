@@ -1,6 +1,6 @@
-import { requireAuth, bindLogout, pageChrome, qs, updateProfileFields, showToast } from "./app.js";
+import { requireAuth, bindLogout, mountPageShell, qs, updateProfileFields, showToast } from "./app.js";
 
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("個人資料", "檢視基本資料與假別餘額")}</div>`;
+mountPageShell("個人資料", "檢視基本資料與假別餘額");
 const profile = await requireAuth();
 bindLogout();
 
@@ -13,7 +13,8 @@ qs("#pageContent").innerHTML = `
       </div>
       <div class="col-md-6">
         <label class="form-label" for="department">部門</label>
-        <input class="form-control" id="department" value="${profile.department || ""}">
+        <input class="form-control" id="department" value="${profile.department || ""}" disabled>
+        <div class="form-text">部門由管理員維護，避免自行變更審核歸屬。</div>
       </div>
       <div class="col-md-6">
         <label class="form-label">Email</label>
@@ -34,8 +35,7 @@ qs("#pageContent").innerHTML = `
 qs("#profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   await updateProfileFields(profile.id, {
-    name: qs("#name").value.trim(),
-    department: qs("#department").value.trim()
+    name: qs("#name").value.trim()
   });
   showToast("個人資料已更新", "success");
 });

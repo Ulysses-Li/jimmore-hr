@@ -1,12 +1,6 @@
-import {
-  collection,
-  getDocs,
-  query,
-  where
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { db, requireAuth, bindLogout, pageChrome, qs, leaveTypeLabel, todayKey, timeToDate } from "./app.js";
+import { requireAuth, bindLogout, mountPageShell, qs, leaveTypeLabel, todayKey, timeToDate, callSecureFunction } from "./app.js";
 
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("休假行事曆", "檢視已核准請假的團隊排程")}</div>`;
+mountPageShell("休假行事曆", "檢視已核准請假的團隊排程");
 await requireAuth();
 bindLogout();
 
@@ -45,13 +39,23 @@ qs("#pageContent").innerHTML = `
     </div>
   </div>`;
 
-const [leaveSnap, attendanceSnap] = await Promise.all([
-  getDocs(query(collection(db, "leaveRequests"), where("status", "==", "approved"))),
-  getDocs(query(collection(db, "attendance"), where("type", "==", "checkIn"), where("status", "==", "late")))
-]);
-
-const allLeaves = leaveSnap.docs.map((item) => item.data());
-const allLateRecords = attendanceSnap.docs.map((item) => item.data());
+let teamCalendar = { leaves: [], lateRecords: [] };
+try {
+  teamCalendar = await callSecureFunction("getTeamCalendar");
+} catch (error) {
+  qs("#pageContent").insertAdjacentHTML(
+    "afterbegin",
+    `<div class="alert alert-danger">
+      <strong>團隊行事曆資料載入失敗。</strong>
+      <div data-calendar-load-error></div>
+    </div>`
+  );
+  qs("[data-calendar-load-error]").textContent =
+    error?.message || "請重新整理後再試。";
+  console.error("團隊行事曆資料載入失敗", error);
+}
+const allLeaves = Array.isArray(teamCalendar?.leaves) ? teamCalendar.leaves : [];
+const allLateRecords = Array.isArray(teamCalendar?.lateRecords) ? teamCalendar.lateRecords : [];
 
 qs("#prevMonthBtn").addEventListener("click", () => {
   visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1);

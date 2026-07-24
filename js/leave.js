@@ -5,16 +5,19 @@ import {
   query,
   serverTimestamp,
   where
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { db, requireAuth, bindLogout, pageChrome, qs, badge, fmtDateTime, hoursBetween, showToast, leaveTypes, leaveTypeLabel, getWorkSettings, timeToDate, todayKey } from "./app.js";
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import { db, requireAuth, bindLogout, mountPageShell, qs, badge, fmtDateTime, hoursBetween, showToast, leaveTypes, leaveTypeLabel, getWorkSettings, timeToDate, todayKey, callSecureFunction } from "./app.js";
 
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("請假申請", "建立請假單並追蹤審核狀態")}</div>`;
+mountPageShell("請假申請", "建立請假單並追蹤審核狀態");
 const profile = await requireAuth();
 bindLogout();
 const settings = await getWorkSettings();
 const assignedShift = getAssignedShift();
 const assignedShiftValid = isTimeRangeValid(assignedShift.workStart, assignedShift.workEnd);
-const proxyCandidates = await loadProxyCandidates();
+const proxyCandidates = await loadProxyCandidates().catch((error) => {
+  console.error("職務代理人名單載入失敗", error);
+  return [];
+});
 
 qs("#pageContent").innerHTML = `
   <div class="row g-3">
@@ -266,12 +269,8 @@ function leavePrintFormCopy(row, start, end, fullDays, remainingHours) {
 }
 
 async function loadProxyCandidates() {
-  const snap = await getDocs(collection(db, "users"));
-  return snap.docs
-    .map((item) => ({ id: item.id, ...item.data() }))
-    .filter((user) => user.id !== profile.id && user.isActive !== false)
-    .filter((user) => !profile.department || !user.department || user.department === profile.department)
-    .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
+  const result = await callSecureFunction("getEmployeeDirectory");
+  return Array.isArray(result?.employees) ? result.employees : [];
 }
 
 function toMillis(value) {

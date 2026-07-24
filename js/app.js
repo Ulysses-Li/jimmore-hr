@@ -1,22 +1,20 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { bootstrap } from "./vendor.js";
+export { bootstrap };
 import {
-  getAuth,
   onAuthStateChanged,
   signOut
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
-  getFirestore,
   doc,
   getDoc,
   setDoc,
   updateDoc,
   serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
-
-export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+const jimmoreLogoUrl = new URL("../Jimmore_logo.ico", import.meta.url).href;
+export { app, auth, db, functions, runtimeEnvironment } from "./platform/firebase-client.js";
+export { callSecureFunction } from "./services/functions-client.js";
+import { auth, db } from "./platform/firebase-client.js";
 
 export const roleLabels = {
   employee: "員工",
@@ -29,6 +27,8 @@ export const statusLabels = {
   late: "遲到",
   earlyLeave: "早退",
   workTimeNotEnough: "工時不足",
+  missing: "未打卡",
+  incomplete: "資料不完整",
   pending: "待審核",
   approved: "已核准",
   rejected: "已駁回",
@@ -40,6 +40,8 @@ export const statusBadges = {
   late: "warning",
   earlyLeave: "danger",
   workTimeNotEnough: "danger",
+  missing: "danger",
+  incomplete: "secondary",
   pending: "secondary",
   approved: "success",
   rejected: "danger",
@@ -133,7 +135,7 @@ export async function getCurrentUserProfile() {
     email: user.email || "",
     department: "",
     role: "employee",
-    annualLeaveHours: 56,
+    annualLeaveHours: 0,
     compensatoryLeaveHours: 0,
     isActive: true,
     createdAt: serverTimestamp(),
@@ -145,31 +147,49 @@ export async function getCurrentUserProfile() {
 
 export async function requireAuth(options = {}) {
   const allowedRoles = options.roles || ["employee", "manager", "admin"];
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        location.href = pathToRoot() + "login.html";
-        return;
-      }
+      try {
+        if (!user) {
+          location.href = pathToRoot() + "login.html";
+          return;
+        }
 
-      const profile = await getCurrentUserProfile();
-      if (!profile?.isActive) {
-        await signOut(auth);
-        location.href = pathToRoot() + "login.html?inactive=1";
-        return;
-      }
+        const profile = await getCurrentUserProfile();
+        if (!profile?.isActive) {
+          await signOut(auth);
+          location.href = pathToRoot() + "login.html?inactive=1";
+          return;
+        }
 
-      if (!allowedRoles.includes(profile.role)) {
-        location.href = profile.role === "admin"
-          ? pathToRoot() + "admin/index.html"
-          : pathToRoot() + "dashboard.html";
-        return;
-      }
+        if (!allowedRoles.includes(profile.role)) {
+          location.href = profile.role === "admin"
+            ? pathToRoot() + "admin/index.html"
+            : pathToRoot() + "dashboard.html";
+          return;
+        }
 
-      renderShellProfile(profile);
-      resolve(profile);
+        renderShellProfile(profile);
+        resolve(profile);
+      } catch (error) {
+        renderStartupError(error);
+        reject(error);
+      }
     });
   });
+}
+
+function renderStartupError(error) {
+  const container = qs("#pageContent") || qs("main") || document.body;
+  container.innerHTML = `
+    <div class="alert alert-danger m-3" role="alert">
+      <h2 class="h5">資料載入失敗</h2>
+      <p class="mb-2" data-startup-error></p>
+      <button class="btn btn-outline-danger btn-sm" type="button" data-reload-page>重新載入</button>
+    </div>`;
+  qs("[data-startup-error]", container).textContent =
+    error?.message || "無法連線至 Firebase，請檢查網路與 App Check 設定。";
+  qs("[data-reload-page]", container)?.addEventListener("click", () => location.reload());
 }
 
 export function pathToRoot() {
@@ -231,17 +251,15 @@ export async function getWorkSettings() {
     holidayDates: [],
     specialClosureDates: [],
     standardHours: 8,
-    lateGraceMinutes: 5,
-    updatedAt: serverTimestamp(),
-    updatedBy: auth.currentUser?.uid || ""
+    lateGraceMinutes: 5
   };
-  await setDoc(ref, defaults);
   return defaults;
 }
 
 export async function updateProfileFields(userId, fields) {
   await updateDoc(doc(db, "users", userId), {
-    ...fields,
+    name: fields.name,
+    ...(fields.phone !== undefined ? { phone: fields.phone } : {}),
     updatedAt: serverTimestamp()
   });
 }
@@ -272,7 +290,7 @@ export function pageChrome(title, subtitle = "") {
       <div class="sidebar-head d-flex align-items-center gap-2 mb-4">
         <div class="d-flex align-items-center gap-2 min-w-0">
           <span class="brand-mark">
-            <img src="${root}Jimmore_logo.ico" alt="Jimmore">
+            <img src="${jimmoreLogoUrl}" alt="Jimmore">
           </span>
           <div class="min-w-0">
             <div class="fw-bold text-truncate">Jimmore HR</div>
@@ -320,4 +338,12 @@ export function pageChrome(title, subtitle = "") {
       </div>
       <div id="toastHost" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
     </main>`;
+}
+
+export function mountPageShell(title, subtitle = "") {
+  document.querySelector(".app-shell")?.remove();
+  document.body.insertAdjacentHTML(
+    "afterbegin",
+    `<div class="app-shell">${pageChrome(title, subtitle)}</div>`
+  );
 }

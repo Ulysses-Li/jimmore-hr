@@ -1,2 +1,12 @@
-README.md
 Jimmore_logo.ico
+functions/node_modules/
+node_modules/
+dist/
+.firebase/
+functions/.env.*
+!functions/.env.example
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+docs/screenshots/
+docs/*.docx

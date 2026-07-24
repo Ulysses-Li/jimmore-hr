@@ -3,10 +3,10 @@ import {
   getDocs,
   query,
   where
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { db, requireAuth, bindLogout, pageChrome, qs, badge, fmtDateTime } from "./app.js";
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import { db, requireAuth, bindLogout, mountPageShell, qs, badge, fmtDateTime } from "./app.js";
 
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("個人儀表板", "今日出勤、假勤與待辦摘要")}</div>`;
+mountPageShell("個人儀表板", "今日出勤、假勤與待辦摘要");
 const profile = await requireAuth();
 bindLogout();
 

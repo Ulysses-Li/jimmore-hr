@@ -5,10 +5,10 @@ import {
   query,
   serverTimestamp,
   where
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { db, requireAuth, bindLogout, pageChrome, qs, badge, fmtDateTime, hoursBetween, showToast } from "./app.js";
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import { db, requireAuth, bindLogout, mountPageShell, qs, badge, fmtDateTime, hoursBetween, showToast } from "./app.js";
 
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("加班申請", "建立加班單並選擇是否轉補休")}</div>`;
+mountPageShell("加班申請", "建立加班單並選擇是否轉補休");
 const profile = await requireAuth();
 bindLogout();
 

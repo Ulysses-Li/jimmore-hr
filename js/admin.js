@@ -1,34 +1,14 @@
 import {
-  addDoc,
   collection,
-  doc,
-  getDoc,
   getDocs,
-  increment,
   query,
-  runTransaction,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
   where
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import {
-  createUserWithEmailAndPassword,
-  deleteUser,
-  getAuth,
-  signOut,
-  updateProfile
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import {
-  deleteApp,
-  initializeApp
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import { firebaseConfig } from "./firebase-config.js";
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import {
   db,
   requireAuth,
   bindLogout,
-  pageChrome,
+  mountPageShell,
   qs,
   badge,
   fmtDateTime,
@@ -39,8 +19,11 @@ import {
   timeToDate,
   todayKey,
   roleLabels,
-  leaveTypeLabel
+  leaveTypeLabel,
+  bootstrap
 } from "./app.js";
+import { callSecureFunction } from "./app.js";
+import { renderSecurityAdmin } from "./security-admin.js";
 
 const mode = document.body.dataset.adminMode;
 const titleMap = {
@@ -52,37 +35,64 @@ const titleMap = {
   settings: ["系統設定", "設定上下班、午休與遲到寬限"]
 };
 const [title, subtitle] = titleMap[mode] || titleMap.home;
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome(title, subtitle)}</div>`;
+mountPageShell(title, subtitle);
 const adminProfile = await requireAuth({ roles: ["manager", "admin"] });
 bindLogout();
 
 const content = qs("#pageContent");
 
-if (mode === "home") await renderHome();
-if (mode === "employees") await renderEmployees();
-if (mode === "attendance") await renderAttendanceReport();
-if (mode === "leave") await renderRequests("leaveRequests");
-if (mode === "overtime") await renderRequests("overtimeRequests");
-if (mode === "settings") await renderSettings();
+function reviewerCollection(collectionName, ...adminConstraints) {
+  if (adminProfile.role === "admin") {
+    return adminConstraints.length ? query(collection(db, collectionName), ...adminConstraints) : collection(db, collectionName);
+  }
+  return query(collection(db, collectionName), where("department", "==", adminProfile.department || ""));
+}
+
+try {
+  if (mode === "home") await renderHome();
+  if (mode === "employees") await renderEmployees();
+  if (mode === "attendance") await renderAttendanceReport();
+  if (mode === "leave") await renderRequests("leaveRequests");
+  if (mode === "overtime") await renderRequests("overtimeRequests");
+  if (mode === "settings") await renderSettings();
+} catch (error) {
+  console.error("Admin page failed to load", error);
+  content.innerHTML = `
+    <div class="alert alert-danger" role="alert">
+      <h2 class="h5">管理資料載入失敗</h2>
+      <p class="mb-2">${escapeHtml(error?.message || "無法連線 Firebase，請稍後再試。")}</p>
+      <button class="btn btn-outline-danger btn-sm" type="button" data-reload-page>重新載入</button>
+    </div>`;
+  content.querySelector("[data-reload-page]")?.addEventListener("click", () => location.reload());
+}
+
+try {
+  await renderSecurityAdmin(mode, adminProfile, content);
+} catch (error) {
+  console.error("Security admin module failed to load", error);
+}
 
 async function renderHome() {
   const [users, leavePending, overtimePending, attendance] = await Promise.all([
-    getDocs(collection(db, "users")),
-    getDocs(query(collection(db, "leaveRequests"), where("status", "==", "pending"))),
-    getDocs(query(collection(db, "overtimeRequests"), where("status", "==", "pending"))),
-    getDocs(collection(db, "attendanceDaily"))
+    getDocs(reviewerCollection("users")),
+    getDocs(reviewerCollection("leaveRequests", where("status", "==", "pending"))),
+    getDocs(reviewerCollection("overtimeRequests", where("status", "==", "pending"))),
+    getDocs(reviewerCollection("attendanceDaily"))
   ]);
-  const userRows = users.docs.map((item) => ({ id: item.id, ...item.data() }));
+  const userRows = users.docs.map((item) => ({ id: item.id, ...item.data() }))
+    .filter((user) => adminProfile.role === "admin" || user.department === adminProfile.department);
   const usersById = Object.fromEntries(userRows.map((user) => [user.id, user]));
   const visibleLeavePending = leavePending.docs
     .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((item) => item.status === "pending")
     .filter((item) => requestVisibleToReviewer(item, usersById));
   const visibleOvertimePending = overtimePending.docs
     .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((item) => item.status === "pending")
     .filter((item) => requestVisibleToReviewer(item, usersById));
   content.innerHTML = `
     <div class="row g-3 mb-4">
-      <div class="col-md-3"><div class="panel p-3"><div class="muted">員工數</div><div class="stat-value">${users.size}</div></div></div>
+      <div class="col-md-3"><div class="panel p-3"><div class="muted">員工數</div><div class="stat-value">${userRows.length}</div></div></div>
       <div class="col-md-3"><div class="panel p-3"><div class="muted">請假待審</div><div class="stat-value">${visibleLeavePending.length}</div></div></div>
       <div class="col-md-3"><div class="panel p-3"><div class="muted">加班待審</div><div class="stat-value">${visibleOvertimePending.length}</div></div></div>
       <div class="col-md-3"><div class="panel p-3"><div class="muted">出勤彙總</div><div class="stat-value">${attendance.size}</div></div></div>
@@ -104,7 +114,7 @@ async function renderEmployees() {
     return;
   }
   const [snap, settings] = await Promise.all([
-    getDocs(collection(db, "users")),
+    getDocs(reviewerCollection("users")),
     getWorkSettings()
   ]);
   const shifts = normalizeWorkShifts(settings);
@@ -138,7 +148,7 @@ async function renderEmployees() {
           </div>
           <div class="col-md-6">
             <label class="form-label" for="createEmployeePassword">初始密碼</label>
-            <input class="form-control" id="createEmployeePassword" type="password" autocomplete="new-password" minlength="6" required>
+            <input class="form-control" id="createEmployeePassword" type="password" autocomplete="new-password" minlength="8" required>
           </div>
           <div class="col-12 d-flex justify-content-end">
             <button class="btn btn-primary" type="submit" data-create-employee>建立帳號</button>
@@ -196,11 +206,18 @@ async function renderEmployees() {
         else if (input.type === "number") payload[field] = Number(input.value || 0);
         else payload[field] = input.value.trim();
       });
-      payload.managerName = usersById[payload.managerId]?.name || "";
-      payload.proxyUserName = usersById[payload.proxyUserId]?.name || "";
-      payload.updatedAt = serverTimestamp();
-      await updateDoc(doc(db, "users", tr.dataset.id), payload);
-      showToast("員工資料已更新", "success");
+      button.disabled = true;
+      try {
+        await callSecureFunction("updateEmployee", {
+          userId: tr.dataset.id,
+          ...payload
+        });
+        showToast("員工資料已更新", "success");
+      } catch (error) {
+        showToast(`更新失敗：${error.message}`, "danger");
+      } finally {
+        button.disabled = false;
+      }
     });
   });
   bindEmployeeFilters(users.length);
@@ -343,13 +360,14 @@ function buildDepartmentOptions(users) {
 
 async function renderAttendanceReport() {
   const [usersSnap, attendanceSnap, leaveSnap, settings] = await Promise.all([
-    getDocs(collection(db, "users")),
-    getDocs(collection(db, "attendance")),
-    getDocs(collection(db, "leaveRequests")),
+    getDocs(reviewerCollection("users")),
+    getDocs(reviewerCollection("attendance")),
+    getDocs(reviewerCollection("leaveRequests")),
     getWorkSettings()
   ]);
   const users = usersSnap.docs
     .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((user) => adminProfile.role === "admin" || user.department === adminProfile.department)
     .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
   const usersById = Object.fromEntries(users.map((item) => [item.id, item]));
   const departments = Array.from(new Set(users.map((user) => user.department || "未分部門"))).sort((a, b) => a.localeCompare(b, "zh-Hant"));
@@ -399,8 +417,8 @@ async function renderAttendanceReport() {
       </div>
       <div class="form-text">人事月報以月份為單位；切換 1 到 12 月後，彙總與原始明細都只顯示該月資料。</div>
       <div class="d-flex justify-content-end gap-2 flex-wrap mt-3">
-        <button class="btn btn-outline-primary" id="attendanceCompanyExportCsv" type="button">全公司出勤紀錄 EXCEL</button>
-        <button class="btn btn-outline-primary" id="attendanceCompanyExportCorrection" type="button">全公司出勤紀錄改</button>
+        <button class="btn btn-outline-primary" id="attendanceCompanyExportCsv" type="button">${adminProfile.role === "admin" ? "全公司" : escapeHtml(adminProfile.department || "所屬部門")}出勤紀錄 EXCEL</button>
+        <button class="btn btn-outline-primary" id="attendanceCompanyExportCorrection" type="button">${adminProfile.role === "admin" ? "全公司" : escapeHtml(adminProfile.department || "所屬部門")}出勤紀錄改</button>
       </div>
     </div>
     ${todayMissingAttendanceHtml(todayMissingUsers, today, settings)}
@@ -747,39 +765,15 @@ function bindCreateEmployeeForm() {
 }
 
 async function createEmployeeAccount({ name, department, email, password }) {
-  const secondaryApp = initializeApp(firebaseConfig, `employee-creation-${Date.now()}`);
-  const secondaryAuth = getAuth(secondaryApp);
-  let createdUser = null;
-  try {
-    const credential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-    createdUser = credential.user;
-    await updateProfile(credential.user, { displayName: name });
-    await setDoc(doc(db, "users", credential.user.uid), {
-      name,
-      email,
-      department,
-      role: "employee",
-      annualLeaveHours: 56,
-      compensatoryLeaveHours: 0,
-      isActive: true,
-      createdBy: adminProfile.id,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    await signOut(secondaryAuth);
-  } catch (error) {
-    if (createdUser) await deleteUser(createdUser).catch(() => {});
-    throw error;
-  } finally {
-    await deleteApp(secondaryApp);
-  }
+  await callSecureFunction("createEmployeeAccount", { name, department, email, password });
 }
 
 function authErrorMessage(error) {
   const messages = {
     "auth/email-already-in-use": "這個 Email 已經有人使用。",
     "auth/invalid-email": "Email 格式不正確。",
-    "auth/weak-password": "密碼強度不足，請至少輸入 6 個字元。"
+    "auth/weak-password": "密碼強度不足，請至少輸入 8 個字元。",
+    "functions/already-exists": "這個 Email 已經有人使用。"
   };
   return messages[error?.code] || error?.message || "請稍後再試。";
 }
@@ -1607,66 +1601,15 @@ async function createManualAttendanceRecord(dataset, usersById, settings) {
   }
 
   const timestamp = timeToDate(date, time);
-  await addDoc(collection(db, "attendance"), {
+  await callSecureFunction("createManualCorrection", {
     userId: user.id,
-    userName: user.name || user.email || "",
-    department: user.department || "",
-    type,
-    shiftId: shift.id || user.defaultShiftId || "default",
-    shiftName: shift.name || "預設班別",
-    workStart: shift.workStart || settings.workStart || "09:00",
-    workEnd: shift.workEnd || settings.workEnd || "18:00",
-    timestamp,
     date,
-    latitude: null,
-    longitude: null,
-    status: "normal",
-    deviceInfo: "manual correction by admin",
-    manualCorrection: true,
-    correctionReason: reason.trim(),
-    correctedBy: adminProfile.id,
-    correctedByName: adminProfile.name || adminProfile.email || "",
-    createdAt: serverTimestamp()
+    type,
+    time,
+    reason: reason.trim()
   });
-
-  await rebuildAttendanceDaily(user.id, date, user, settings);
   showToast(`${user.name || user.email} ${date} 已補登${typeLabel}`, "success");
   await renderAttendanceReport();
-}
-
-async function rebuildAttendanceDaily(userId, date, user, settings) {
-  const [attendanceSnap, leaveSnap] = await Promise.all([
-    getDocs(query(collection(db, "attendance"), where("userId", "==", userId), where("date", "==", date))),
-    getDocs(query(collection(db, "leaveRequests"), where("userId", "==", userId)))
-  ]);
-  const rows = attendanceSnap.docs.map((item) => item.data()).sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp));
-  const approvedLeaves = leaveSnap.docs
-    .map((item) => item.data())
-    .filter((item) => item.status === "approved");
-  const summary = buildAttendanceSummaryRows(rows, user, settings, approvedLeaves)[0];
-  if (!summary) return;
-  const firstIn = rows.find((row) => row.type === "checkIn");
-  const lastOut = rows.filter((row) => row.type === "checkOut").at(-1);
-
-  await setDoc(doc(db, "attendanceDaily", `${date}_${userId}`), {
-    userId,
-    userName: user.name || user.email || "",
-    department: user.department || "",
-    date,
-    shiftId: summary.shiftId,
-    shiftName: summary.shiftName,
-    workStart: summary.workStart,
-    workEnd: summary.workEnd,
-    checkInTime: firstIn?.timestamp || null,
-    checkOutTime: lastOut?.timestamp || null,
-    totalWorkHours: Number(summary.workHours || 0),
-    creditedLeaveHours: Number(summary.creditedLeaveHours || 0),
-    status: summary.status,
-    isEightHoursReached: Number(summary.workHours || 0) + Number(summary.creditedLeaveHours || 0) >= Number(settings.standardHours || 8),
-    updatedAt: serverTimestamp(),
-    updatedBy: adminProfile.id,
-    hasManualCorrection: rows.some((row) => row.manualCorrection)
-  }, { merge: true });
 }
 
 function minutesAfter(later, earlier) {
@@ -1689,8 +1632,8 @@ function dateKeyFromTimestamp(value) {
 async function renderRequests(collectionName) {
   const isLeave = collectionName === "leaveRequests";
   const [snap, usersSnap] = await Promise.all([
-    getDocs(collection(db, collectionName)),
-    getDocs(collection(db, "users"))
+    getDocs(reviewerCollection(collectionName)),
+    getDocs(reviewerCollection("users"))
   ]);
   const users = usersSnap.docs.map((item) => ({ id: item.id, ...item.data() }));
   const usersById = Object.fromEntries(users.map((user) => [user.id, user]));
@@ -1801,49 +1744,7 @@ function bindVoidLeaveActions(requests) {
 
 async function voidApprovedLeave(requestId, reason) {
   if (adminProfile.role !== "admin") throw new Error("只有管理員可以將假單設為無效。");
-  const requestRef = doc(db, "leaveRequests", requestId);
-
-  return runTransaction(db, async (transaction) => {
-    const requestSnap = await transaction.get(requestRef);
-    if (!requestSnap.exists()) throw new Error("找不到這張假單。");
-    const request = requestSnap.data();
-    if (request.status !== "approved") throw new Error("這張假單已不是已核准狀態，請重新整理後再確認。");
-
-    const leaveField = request.leaveType === "annual"
-      ? "annualLeaveHours"
-      : request.leaveType === "compensatory"
-        ? "compensatoryLeaveHours"
-        : "";
-    const refundedHours = leaveField ? Number(request.hours || 0) : 0;
-    if (leaveField && (!Number.isFinite(refundedHours) || refundedHours <= 0)) {
-      throw new Error("假單時數資料不正確，無法安全回補餘額。");
-    }
-
-    let userRef = null;
-    if (leaveField) {
-      userRef = doc(db, "users", request.userId);
-      const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists()) throw new Error("找不到員工資料，無法回補餘額。");
-    }
-
-    transaction.update(requestRef, {
-      status: "voided",
-      voidReason: reason,
-      voidedBy: adminProfile.id,
-      voidedByName: adminProfile.name || adminProfile.email || "",
-      voidedAt: serverTimestamp(),
-      refundedLeaveHours: refundedHours,
-      refundedLeaveType: leaveField ? request.leaveType : "",
-      updatedAt: serverTimestamp()
-    });
-    if (userRef) {
-      transaction.update(userRef, {
-        [leaveField]: increment(refundedHours),
-        updatedAt: serverTimestamp()
-      });
-    }
-    return { refundedHours, leaveType: request.leaveType };
-  });
+  return callSecureFunction("voidApprovedLeave", { requestId, reason });
 }
 
 function requestVisibleToReviewer(request, usersById) {
@@ -1871,29 +1772,22 @@ function toMillis(value) {
 
 async function reviewRequest(collectionName, tr, status) {
   const id = tr.dataset.id;
-  const userId = tr.dataset.userId;
   const hours = Number(tr.dataset.hours || 0);
   if (status === "approved" && collectionName === "leaveRequests" && !isWholeHourValue(hours)) {
     showToast("請假時數必須為整數小時，請先駁回並請員工重新送單", "warning");
     return;
   }
-  await updateDoc(doc(db, collectionName, id), {
-    status,
-    approvedBy: adminProfile.id,
-    approvedAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  });
-
-  if (status === "approved" && collectionName === "leaveRequests") {
-    const leaveField = tr.dataset.kind === "compensatory" ? "compensatoryLeaveHours" : tr.dataset.kind === "annual" ? "annualLeaveHours" : "";
-    if (leaveField) await updateDoc(doc(db, "users", userId), { [leaveField]: increment(-hours), updatedAt: serverTimestamp() });
+  try {
+    await callSecureFunction("reviewHrRequest", {
+      collectionName,
+      requestId: id,
+      status
+    });
+    showToast(status === "approved" ? "已核准" : "已駁回", status === "approved" ? "success" : "danger");
+    await renderRequests(collectionName);
+  } catch (error) {
+    showToast(`審核失敗：${error.message}`, "danger");
   }
-  if (status === "approved" && collectionName === "overtimeRequests" && tr.dataset.comp === "1") {
-    await updateDoc(doc(db, "users", userId), { compensatoryLeaveHours: increment(hours), updatedAt: serverTimestamp() });
-  }
-
-  showToast(status === "approved" ? "已核准" : "已駁回", status === "approved" ? "success" : "danger");
-  await renderRequests(collectionName);
 }
 
 async function renderSettings() {
@@ -1946,20 +1840,22 @@ async function renderSettings() {
       showToast(`${invalidShift.name} 的下班時間必須晚於上班時間`, "warning");
       return;
     }
-    await setDoc(doc(db, "workSettings", "default"), {
-      workStart: workShifts[0].workStart,
-      workEnd: workShifts[0].workEnd,
-      workShifts,
-      lunchStart: qs("#lunchStart").value,
-      lunchEnd: qs("#lunchEnd").value,
-      holidayDates: readHolidayDates(),
-      specialClosureDates: readSpecialClosureDates(),
-      standardHours: Number(qs("#standardHours").value),
-      lateGraceMinutes: Number(qs("#lateGraceMinutes").value),
-      updatedAt: serverTimestamp(),
-      updatedBy: adminProfile.id
-    }, { merge: true });
-    showToast("設定已更新", "success");
+    try {
+      await callSecureFunction("saveWorkSettings", {
+        workStart: workShifts[0].workStart,
+        workEnd: workShifts[0].workEnd,
+        workShifts,
+        lunchStart: qs("#lunchStart").value,
+        lunchEnd: qs("#lunchEnd").value,
+        holidayDates: readHolidayDates(),
+        specialClosureDates: readSpecialClosureDates(),
+        standardHours: Number(qs("#standardHours").value),
+        lateGraceMinutes: Number(qs("#lateGraceMinutes").value)
+      });
+      showToast("設定已更新", "success");
+    } catch (error) {
+      showToast(`設定儲存失敗：${error.message}`, "danger");
+    }
   });
 }
 

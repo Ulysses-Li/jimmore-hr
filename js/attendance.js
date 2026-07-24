@@ -1,18 +1,14 @@
 import {
-  addDoc,
   collection,
-  doc,
   getDocs,
   query,
-  serverTimestamp,
-  setDoc,
   where
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import {
   db,
   requireAuth,
   bindLogout,
-  pageChrome,
+  mountPageShell,
   qs,
   badge,
   fmtDateTime,
@@ -23,8 +19,15 @@ import {
   hoursBetween,
   showToast
 } from "./app.js";
+import {
+  authenticateAndPunch,
+  registerApprovedPasskey,
+  requestPasskeyEnrollment
+} from "./passkeys.js";
+import { callSecureFunction } from "./app.js";
+import { acquirePunchLocation } from "./services/geolocation-service.js";
 
-document.body.innerHTML = `<div class="app-shell d-flex">${pageChrome("出勤打卡", "GPS 簽到簽退與每日工時判定")}</div>`;
+mountPageShell("出勤打卡", "GPS 簽到簽退與每日工時判定");
 const profile = await requireAuth();
 bindLogout();
 const settings = await getWorkSettings();
@@ -52,6 +55,17 @@ qs("#pageContent").innerHTML = `
           <button class="btn btn-success btn-lg" id="checkInBtn">上班簽到</button>
           <button class="btn btn-warning btn-lg" id="checkOutBtn">下班簽退</button>
         </div>
+        <div class="alert alert-warning mt-3 d-none" id="locationPermissionHelp" role="alert">
+          <div class="fw-bold mb-2">iPhone 定位權限修復</div>
+          <ol class="small mb-2 ps-3">
+            <li>點 Safari 網址列左側的「頁面選單」圖示。</li>
+            <li>開啟「網站設定」，將「位置」改為「允許」或「詢問」。</li>
+            <li>若仍被拒絕：到「設定 → 隱私權與安全性 → 定位服務」，開啟定位服務。</li>
+            <li>進入「Safari 網站」，選擇「使用 App 期間」並開啟「精確位置」。</li>
+          </ol>
+          <button class="btn btn-sm btn-outline-dark" id="retryLocationBtn" type="button">重新檢查定位</button>
+          <div class="small mt-2">若裝置受公司管理或螢幕使用時間限制，請聯絡管理員解除定位限制。</div>
+        </div>
         <hr>
         <dl class="row mb-0">
           <dt class="col-5">班別</dt><dd class="col-7" id="shiftSummary">-</dd>
@@ -73,18 +87,36 @@ qs("#pageContent").innerHTML = `
         </div>
       </div>
     </div>
+  </div>
+  <div class="row g-3 mt-1">
+    <div class="col-lg-5">
+      <div class="panel p-3 h-100">
+        <h2 class="h5 mb-2">Passkey 生物辨識</h2>
+        <p class="small muted">第一次使用先提出裝置申請，由主管當面核准後，再完成 Face ID、指紋或 Windows Hello 註冊。</p>
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-outline-primary" id="requestPasskeyBtn">申請註冊此裝置</button>
+          <button class="btn btn-primary" id="registerPasskeyBtn">完成已核准註冊</button>
+        </div>
+        <div class="form-text mt-2" id="passkeyStatus">正在讀取註冊狀態...</div>
+        <div class="small muted mt-2">
+          iPhone 若無法叫出 Face ID：請改用 Safari 一般分頁，確認已設定 Face ID、解鎖密碼，
+          並開啟 iCloud「密碼與鑰匙圈」。
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <div class="panel p-3 h-100">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+          <div>
+            <h2 class="h5 mb-1">未打卡原因待辦</h2>
+            <div class="small muted">補打卡不會刪除案件，仍需填寫原因並由主管審核。</div>
+          </div>
+          <span class="badge text-bg-secondary" id="exceptionCount">0 筆</span>
+        </div>
+        <div id="exceptionList"><div class="muted">載入中...</div></div>
+      </div>
+    </div>
   </div>`;
-
-async function getPosition() {
-  if (!navigator.geolocation) throw new Error("此瀏覽器不支援 Geolocation");
-  return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 12000,
-      maximumAge: 0
-    });
-  });
-}
 
 function resolveStatus(type, at, approvedLeaves = [], shiftOverride = null) {
   const dateKey = todayKey(at);
@@ -119,92 +151,17 @@ async function punch(type) {
       throw new Error(`目前已於 ${fmtTime(lastRecord?.timestamp)} 簽退，如需再次外出前請先簽到。`);
     }
 
-    const pos = await getPosition();
-    const approvedLeaves = await loadApprovedLeavesForDate(todayKey(at));
-    const status = resolveStatus(type, at, approvedLeaves);
-    const record = {
-      userId: profile.id,
-      userName: profile.name,
-      department: profile.department || "",
-      type,
-      shiftId: shift.id,
-      shiftName: shift.name,
-      workStart: shift.workStart,
-      workEnd: shift.workEnd,
-      timestamp: at,
-      date: todayKey(at),
-      latitude: pos.coords.latitude,
-      longitude: pos.coords.longitude,
-      status,
-      deviceInfo: navigator.userAgent,
-      createdAt: serverTimestamp()
-    };
-    await addDoc(collection(db, "attendance"), record);
-    if (type === "checkOut") await updateDaily(at);
+    const location = await acquirePunchLocation();
+    hideLocationPermissionHelp();
+    await authenticateAndPunch(type, location);
     showToast(`${type === "checkIn" ? "上班簽到" : "下班簽退"}完成`, "success");
   } catch (error) {
+    if (isLocationPermissionDenied(error)) showLocationPermissionHelp();
     showToast(`打卡失敗：${friendlyPunchError(error)}`, "danger");
   } finally {
     setPunching(false, type);
     await render();
   }
-}
-
-async function updateDaily(now) {
-  const date = todayKey(now);
-  const approvedLeaves = await loadApprovedLeavesForDate(date);
-  const snap = await getDocs(query(
-    collection(db, "attendance"),
-    where("userId", "==", profile.id),
-    where("date", "==", date)
-  ));
-  const records = snap.docs.map((item) => item.data()).sort(byTimestampAsc);
-  const firstIn = records.find((item) => item.type === "checkIn");
-  const lastOut = records.filter((item) => item.type === "checkOut").at(-1);
-  if (!firstIn || !lastOut) return;
-  const shift = findShift(firstIn.shiftId) || {
-    id: firstIn.shiftId || "default",
-    name: firstIn.shiftName || "預設班別",
-    workStart: firstIn.workStart || settings.workStart,
-    workEnd: firstIn.workEnd || settings.workEnd
-  };
-
-  const checkInTime = toDate(firstIn.timestamp);
-  const checkOutTime = toDate(lastOut.timestamp);
-  const lunchStart = timeToDate(date, settings.lunchStart);
-  const lunchEnd = timeToDate(date, settings.lunchEnd);
-  const creditedLeaveHours = calculateApprovedLeaveWorkHours(date, approvedLeaves, shift);
-  const total = calculateAttendanceWorkHours(records, approvedLeaves, lunchStart, lunchEnd);
-  const expectedHours = scheduledWorkHours(date, shift);
-  const reached = total + creditedLeaveHours >= expectedHours;
-  const firstInStatus = resolveStatus("checkIn", checkInTime, approvedLeaves, shift);
-  const lastOutStatus = resolveStatus("checkOut", checkOutTime, approvedLeaves, shift);
-  const dailyStatus = lastOutStatus === "earlyLeave"
-    ? "earlyLeave"
-    : reached
-      ? (firstInStatus === "late" ? "late" : "normal")
-      : "workTimeNotEnough";
-
-  await setDoc(doc(db, "attendanceDaily", `${date}_${profile.id}`), {
-    userId: profile.id,
-    userName: profile.name,
-    department: profile.department || "",
-    date,
-    shiftId: shift.id,
-    shiftName: shift.name,
-    workStart: shift.workStart,
-    workEnd: shift.workEnd,
-    effectiveWorkEnd: effectiveWorkEndTime(date, shift),
-    expectedHours,
-    checkInTime: firstIn.timestamp,
-    checkOutTime: lastOut.timestamp,
-    totalWorkHours: Number(total.toFixed(2)),
-    creditedLeaveHours: Number(creditedLeaveHours.toFixed(2)),
-    lunchDeductHours: Number(calculateAttendanceLunchHours(records, lunchStart, lunchEnd).toFixed(2)),
-    status: dailyStatus,
-    isEightHoursReached: reached,
-    updatedAt: serverTimestamp()
-  }, { merge: true });
 }
 
 function calculateAttendanceWorkHours(records, approvedLeaves, lunchStart, lunchEnd) {
@@ -503,12 +460,24 @@ function setPunching(isPunching, type) {
 }
 
 function friendlyPunchError(error) {
-  if (error?.code === 1 || /denied geolocation/i.test(error?.message || "")) {
+  if (isLocationPermissionDenied(error)) {
     return "定位權限被拒絕。請點網址列左側圖示，允許位置權限後再試一次。";
   }
   if (error?.code === 2) return "目前無法取得定位，請確認定位服務已開啟。";
   if (error?.code === 3) return "取得定位逾時，請稍後再試。";
   return error?.message || "未知錯誤";
+}
+
+function isLocationPermissionDenied(error) {
+  return error?.code === 1 || /denied geolocation|定位權限被拒絕/i.test(error?.message || "");
+}
+
+function showLocationPermissionHelp() {
+  qs("#locationPermissionHelp")?.classList.remove("d-none");
+}
+
+function hideLocationPermissionHelp() {
+  qs("#locationPermissionHelp")?.classList.add("d-none");
 }
 
 function mapLink(latitude, longitude) {
@@ -533,6 +502,136 @@ function toMillis(value) {
   return new Date(value).getTime();
 }
 
+const exceptionStatusLabels = {
+  pending_employee_reason: "待填原因",
+  pending_manager_review: "待主管審核",
+  needs_more_info: "需補充",
+  approved: "已核准",
+  rejected: "已駁回",
+  overdue: "已逾期"
+};
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+  })[char]);
+}
+
+async function renderPasskeyStatus() {
+  const snap = await getDocs(query(
+    collection(db, "passkeyEnrollmentRequests"),
+    where("userId", "==", profile.id)
+  ));
+  const row = snap.docs.map((item) => item.data()).sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt))[0];
+  const labels = {
+    pending: "等待主管當面核准",
+    approved: "主管已核准，請按「完成已核准註冊」",
+    registered: "此帳號已有可用 Passkey",
+    reset: "原 Passkey 已重設，請重新提出申請"
+  };
+  qs("#passkeyStatus").textContent = row ? labels[row.status] || row.status : "尚未提出裝置註冊申請";
+  qs("#registerPasskeyBtn").disabled = row?.status !== "approved";
+}
+
+async function renderExceptions() {
+  const snap = await getDocs(query(
+    collection(db, "attendanceExceptions"),
+    where("userId", "==", profile.id)
+  ));
+  const rows = snap.docs.map((item) => ({ id: item.id, ...item.data() }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const openRows = rows.filter((row) => ["pending_employee_reason", "needs_more_info", "overdue"].includes(row.status));
+  qs("#exceptionCount").textContent = `${openRows.length} 筆待處理`;
+  qs("#exceptionList").innerHTML = rows.length ? rows.slice(0, 8).map((row) => {
+    const editable = ["pending_employee_reason", "needs_more_info", "overdue"].includes(row.status);
+    return `<section class="border rounded p-3 mb-2 exception-card" data-case-id="${escapeHtml(row.id)}">
+      <div class="d-flex justify-content-between gap-2 mb-2">
+        <div><strong>${escapeHtml(row.date)}</strong> · ${escapeHtml(row.shiftName || row.workStart || "班別")}</div>
+        <span class="badge text-bg-${editable ? "warning" : "secondary"}">${escapeHtml(exceptionStatusLabels[row.status] || row.status)}</span>
+      </div>
+      ${row.reviewNote ? `<div class="alert alert-light py-2 small">主管回覆：${escapeHtml(row.reviewNote)}</div>` : ""}
+      ${editable ? `<form data-exception-form>
+        <div class="row g-2">
+          <div class="col-md-4"><select class="form-select form-select-sm" name="category" required>
+            <option value="">選擇原因</option>
+            <option value="forgot">忘記打卡</option>
+            <option value="device_failure">裝置／Passkey 故障</option>
+            <option value="fieldwork">外勤配置問題</option>
+            <option value="leave_pending">請假尚待核准</option>
+            <option value="other">其他</option>
+          </select></div>
+          <div class="col-md-6"><input class="form-control form-control-sm" name="reason" maxlength="1000" placeholder="請說明未打卡原因跟實際到達時間" value="${escapeHtml(row.reason || "")}" required></div>
+          <div class="col-md-2 d-grid"><button class="btn btn-sm btn-primary">送主管審核</button></div>
+        </div>
+      </form>` : `<div class="small">${escapeHtml(row.reason || "尚無說明")}</div>`}
+    </section>`;
+  }).join("") : `<div class="muted">目前沒有未打卡案件</div>`;
+
+  qs("#exceptionList").querySelectorAll("[data-exception-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const card = form.closest("[data-case-id]");
+      const button = form.querySelector("button");
+      button.disabled = true;
+      try {
+        await callSecureFunction("submitExceptionReason", {
+          caseId: card.dataset.caseId,
+          category: form.elements.category.value,
+          reason: form.elements.reason.value.trim()
+        });
+        showToast("原因已送交主管審核", "success");
+        await renderExceptions();
+      } catch (error) {
+        showToast(error.message, "danger");
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+qs("#requestPasskeyBtn").addEventListener("click", async () => {
+  const button = qs("#requestPasskeyBtn");
+  button.disabled = true;
+  try {
+    await requestPasskeyEnrollment(`${navigator.platform || "裝置"} · ${new Date().toLocaleDateString("zh-TW")}`);
+    showToast("裝置申請已送出，請主管當面核准", "success");
+    await renderPasskeyStatus();
+  } catch (error) {
+    showToast(error.message, "danger");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+qs("#retryLocationBtn").addEventListener("click", async () => {
+  const button = qs("#retryLocationBtn");
+  button.disabled = true;
+  try {
+    const location = await acquirePunchLocation();
+    hideLocationPermissionHelp();
+    showToast(`定位成功，精度約 ${Math.round(location.accuracy)} 公尺，可以重新打卡。`, "success");
+  } catch (error) {
+    showLocationPermissionHelp();
+    showToast(friendlyPunchError(error), "danger");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+qs("#registerPasskeyBtn").addEventListener("click", async () => {
+  const button = qs("#registerPasskeyBtn");
+  button.disabled = true;
+  try {
+    await registerApprovedPasskey();
+    showToast("Passkey 註冊完成，之後每次打卡都會要求生物辨識", "success");
+    await renderPasskeyStatus();
+  } catch (error) {
+    showToast(error.message, "danger");
+  } finally {
+    button.disabled = false;
+  }
+});
+
 qs("#checkInBtn").addEventListener("click", () => punch("checkIn"));
 qs("#checkOutBtn").addEventListener("click", () => punch("checkOut"));
-await render();
+await Promise.all([render(), renderPasskeyStatus(), renderExceptions()]);

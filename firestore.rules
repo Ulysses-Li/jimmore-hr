@@ -70,6 +70,7 @@ service cloud.firestore {
 
     match /attendanceExceptions/{caseId} {
       allow read: if owns(resource.data.userId)
+        || reviewsDepartment(resource.data.department)
         || reviewsManager(resource.data.get('managerId', ''))
         || reviewsEmployee(resource.data.userId);
       allow write: if false;
@@ -77,6 +78,7 @@ service cloud.firestore {
 
     match /passkeyEnrollmentRequests/{requestId} {
       allow read: if owns(resource.data.userId)
+        || reviewsDepartment(resource.data.department)
         || reviewsManager(resource.data.get('managerId', ''))
         || reviewsEmployee(resource.data.userId);
       allow write: if false;
@@ -108,6 +110,7 @@ service cloud.firestore {
 
     match /leaveRequests/{requestId} {
       allow read: if owns(resource.data.userId)
+        || reviewsDepartment(resource.data.department)
         || reviewsManager(resource.data.get('managerId', ''))
         || reviewsEmployee(resource.data.userId);
       allow create: if owns(request.resource.data.userId)
@@ -120,6 +123,7 @@ service cloud.firestore {
 
     match /overtimeRequests/{requestId} {
       allow read: if owns(resource.data.userId)
+        || reviewsDepartment(resource.data.department)
         || reviewsManager(resource.data.get('managerId', ''))
         || reviewsEmployee(resource.data.userId);
       allow create: if owns(request.resource.data.userId)

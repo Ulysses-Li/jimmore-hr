@@ -45,11 +45,7 @@ function reviewerCollection(collectionName, ...adminConstraints) {
   if (adminProfile.role === "admin") {
     return adminConstraints.length ? query(collection(db, collectionName), ...adminConstraints) : collection(db, collectionName);
   }
-  const directlyManagedCollections = new Set(["users", "leaveRequests", "overtimeRequests"]);
-  const scope = directlyManagedCollections.has(collectionName)
-    ? where("managerId", "==", adminProfile.id)
-    : where("department", "==", adminProfile.department || "");
-  return query(collection(db, collectionName), scope);
+  return query(collection(db, collectionName), where("department", "==", adminProfile.department || ""));
 }
 
 try {

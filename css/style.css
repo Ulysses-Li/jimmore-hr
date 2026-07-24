@@ -171,17 +171,27 @@ body {
 }
 
 .exception-toolbar {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 130px 120px minmax(220px, 1fr) auto;
+  align-items: end;
   gap: 12px;
   margin: 14px 0 10px;
 }
 
-.exception-toolbar .form-control {
-  max-width: 360px;
+.exception-toolbar label {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.exception-toolbar label > span {
+  color: var(--jm-muted);
+  font-size: .78rem;
+  font-weight: 700;
 }
 
 .exception-toolbar [data-case-result-count] {
+  padding-bottom: 7px;
   white-space: nowrap;
 }
 
@@ -696,12 +706,12 @@ body {
   }
 
   .exception-toolbar {
-    align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .exception-toolbar .form-control {
-    max-width: none;
+  .exception-search-field,
+  .exception-toolbar [data-case-result-count] {
+    grid-column: 1 / -1;
   }
 
   .exception-case-summary {

@@ -46,6 +46,16 @@ async function renderAttendanceSecurity(profile, content) {
   const attentionCount = cases.filter((item) => attentionStatuses.has(item.status)).length;
   const waitingCount = cases.filter((item) => ["pending_employee_reason", "overdue"].includes(item.status)).length;
   const completedCount = cases.filter((item) => ["approved", "rejected"].includes(item.status)).length;
+  const caseYears = [...new Set(cases.map((item) => String(item.date || "").slice(0, 4)).filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));
+  const now = new Date();
+  const currentYear = String(now.getFullYear());
+  const currentMonth = String(now.getMonth() + 1).padStart(2, "0");
+  const latestDate = String(cases[0]?.date || "");
+  const defaultCaseYear = caseYears.includes(currentYear) ? currentYear : latestDate.slice(0, 4);
+  const defaultCaseMonth = cases.some((item) => String(item.date || "").startsWith(`${defaultCaseYear}-${currentMonth}`))
+    ? currentMonth
+    : latestDate.slice(5, 7);
   const host = document.createElement("div");
   host.id = "attendanceSecurityPanel";
   host.innerHTML = `
@@ -81,21 +91,40 @@ async function renderAttendanceSecurity(profile, content) {
         <div class="exception-workspace mt-3">
           <div class="exception-summary-grid">
             <button class="exception-summary-card is-active" type="button" data-case-filter="attention">
-              <span>待主管處理</span><strong>${attentionCount}</strong>
+              <span>待主管處理</span><strong data-case-count="attention">${attentionCount}</strong>
             </button>
             <button class="exception-summary-card" type="button" data-case-filter="waiting">
-              <span>待員工／逾期</span><strong>${waitingCount}</strong>
+              <span>待員工／逾期</span><strong data-case-count="waiting">${waitingCount}</strong>
             </button>
             <button class="exception-summary-card" type="button" data-case-filter="completed">
-              <span>已完成</span><strong>${completedCount}</strong>
+              <span>已完成</span><strong data-case-count="completed">${completedCount}</strong>
             </button>
             <button class="exception-summary-card" type="button" data-case-filter="all">
-              <span>全部案件</span><strong>${cases.length}</strong>
+              <span>全部案件</span><strong data-case-count="all">${cases.length}</strong>
             </button>
           </div>
           <div class="exception-toolbar">
-            <label class="visually-hidden" for="securityCaseSearch">搜尋未打卡案件</label>
-            <input class="form-control form-control-sm" id="securityCaseSearch" type="search" placeholder="搜尋姓名、部門、日期或原因" data-case-search>
+            <label>
+              <span>年份</span>
+              <select class="form-select form-select-sm" data-case-year>
+                <option value="">全部年份</option>
+                ${caseYears.map((year) => `<option value="${year}"${year === defaultCaseYear ? " selected" : ""}>${year} 年</option>`).join("")}
+              </select>
+            </label>
+            <label>
+              <span>月份</span>
+              <select class="form-select form-select-sm" data-case-month>
+                <option value="">全年</option>
+                ${Array.from({ length: 12 }, (_, index) => {
+                  const month = String(index + 1).padStart(2, "0");
+                  return `<option value="${month}"${month === defaultCaseMonth ? " selected" : ""}>${index + 1} 月</option>`;
+                }).join("")}
+              </select>
+            </label>
+            <label class="exception-search-field">
+              <span>搜尋</span>
+              <input class="form-control form-control-sm" id="securityCaseSearch" type="search" placeholder="姓名、部門、日期或原因" data-case-search>
+            </label>
             <span class="small muted" data-case-result-count></span>
           </div>
           <div class="exception-list" id="securityCaseList">${cases.length ? cases.slice(0, 100).map((row) => caseHtml(row, profile)).join("") : `<div class="muted">目前沒有未打卡案件</div>`}</div>
@@ -136,7 +165,9 @@ function caseHtml(row, profile) {
     : row.status === "approved" ? "success"
       : ["rejected", "overdue"].includes(row.status) ? "danger" : "secondary";
   return `<details class="exception-case" data-review-case="${escapeHtml(row.id)}"
-    data-case-group="${group}" data-case-search-text="${escapeHtml(searchableText)}">
+    data-case-group="${group}" data-case-year="${escapeHtml(String(row.date || "").slice(0, 4))}"
+    data-case-month="${escapeHtml(String(row.date || "").slice(5, 7))}"
+    data-case-search-text="${escapeHtml(searchableText)}">
     <summary class="exception-case-summary">
       <span class="exception-case-date">${escapeHtml(row.date)}</span>
       <span class="exception-case-person">
@@ -174,21 +205,36 @@ function bindCaseFilters(host) {
   const buttons = [...host.querySelectorAll("[data-case-filter]")];
   const rows = [...host.querySelectorAll("[data-review-case]")];
   const search = host.querySelector("[data-case-search]");
+  const year = host.querySelector("[data-case-year]");
+  const month = host.querySelector("[data-case-month]");
   const resultCount = host.querySelector("[data-case-result-count]");
   const empty = host.querySelector("[data-case-empty]");
-  if (!buttons.length || !search || !resultCount || !empty) return;
+  if (!buttons.length || !search || !year || !month || !resultCount || !empty) return;
   let activeFilter = "attention";
 
   const apply = () => {
     const term = search.value.trim().toLocaleLowerCase("zh-Hant");
+    const selectedYear = year.value;
+    const selectedMonth = month.value;
     let visibleCount = 0;
+    const groupCounts = { attention: 0, waiting: 0, completed: 0, all: 0 };
     rows.forEach((row) => {
-      const groupMatches = activeFilter === "all" || row.dataset.caseGroup === activeFilter;
+      const periodMatches = (!selectedYear || row.dataset.caseYear === selectedYear)
+        && (!selectedMonth || row.dataset.caseMonth === selectedMonth);
       const searchMatches = !term || row.dataset.caseSearchText.includes(term);
-      const visible = groupMatches && searchMatches;
+      if (periodMatches && searchMatches) {
+        groupCounts[row.dataset.caseGroup] += 1;
+        groupCounts.all += 1;
+      }
+      const groupMatches = activeFilter === "all" || row.dataset.caseGroup === activeFilter;
+      const visible = groupMatches && periodMatches && searchMatches;
       row.hidden = !visible;
       if (!visible) row.open = false;
       if (visible) visibleCount += 1;
+    });
+    Object.entries(groupCounts).forEach(([group, count]) => {
+      const target = host.querySelector(`[data-case-count="${group}"]`);
+      if (target) target.textContent = String(count);
     });
     resultCount.textContent = `顯示 ${visibleCount} 筆`;
     empty.hidden = visibleCount !== 0;
@@ -202,6 +248,8 @@ function bindCaseFilters(host) {
     });
   });
   search.addEventListener("input", apply);
+  year.addEventListener("change", apply);
+  month.addEventListener("change", apply);
   apply();
 }
 

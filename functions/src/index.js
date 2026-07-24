@@ -254,6 +254,9 @@ exports.finishPasskeyRegistration = callable(async function finishPasskeyRegistr
 
 exports.beginPunch = callable(async function beginPunch(request) {
   const employee = await profileFor(request.auth.uid);
+  if (employee.attendanceRequired === false) {
+    throw new HttpsError("failed-precondition", "此帳號已設定為免打卡人員。");
+  }
   const type = request.data?.type;
   if (!['checkIn', 'checkOut'].includes(type)) throw new HttpsError("invalid-argument", "打卡類型錯誤。");
   const credentialSnap = await db.collection("passkeyCredentials").where("userId", "==", employee.id).get();
@@ -277,10 +280,13 @@ async function activeFieldAssignments(userId, now) {
   });
 }
 
-async function currentLocationDecision(userId, now, location) {
+async function currentLocationDecision(employee, now, location) {
+  if (employee.workMode === "field") {
+    return decideLocation(location, [], [], { unrestricted: true });
+  }
   const [siteSnap, assignments] = await Promise.all([
     db.collection("workSites").where("active", "==", true).get(),
-    activeFieldAssignments(userId, now)
+    activeFieldAssignments(employee.id, now)
   ]);
   return decideLocation(location,
     siteSnap.docs.map((item) => ({ id: item.id, ...item.data() })),
@@ -410,6 +416,9 @@ async function rebuildAttendanceDaily(employee, date, settings) {
 
 exports.finishPunch = callable(async function finishPunch(request) {
   const employee = await profileFor(request.auth.uid);
+  if (employee.attendanceRequired === false) {
+    throw new HttpsError("failed-precondition", "此帳號已設定為免打卡人員。");
+  }
   const challenge = await loadChallenge(employee.id, "punch");
   const response = request.data?.response;
   if (!response?.id) throw new HttpsError("invalid-argument", "缺少 Passkey 驗證結果。");
@@ -442,7 +451,7 @@ exports.finishPunch = callable(async function finishPunch(request) {
   assertPunchWindow(now, date, shift, settings);
   const rows = await recordsForDate(employee.id, date);
   validatePunchSequence(challenge.punchType, rows);
-  const locationDecision = await currentLocationDecision(employee.id, now, request.data?.location);
+  const locationDecision = await currentLocationDecision(employee, now, request.data?.location);
   if (!locationDecision.allowed) {
     throw new HttpsError("permission-denied", locationDecision.reason === "gps_accuracy_too_low"
       ? "定位精度不足，請移至可接收 GPS 的位置後重試。" : "目前位置不在公司據點或核准外勤範圍內。");
@@ -785,7 +794,8 @@ exports.createMissingAttendanceCases = onSchedule({
     db.collection("attendanceExceptions").get()
   ]);
   const settings = settingsSnap.exists ? settingsSnap.data() : {};
-  const users = usersSnap.docs.map((item) => ({ id: item.id, ...item.data() })).filter((user) => user.isActive !== false);
+  const users = usersSnap.docs.map((item) => ({ id: item.id, ...item.data() }))
+    .filter((user) => user.isActive !== false && user.attendanceRequired !== false);
   const attendance = attendanceSnap.docs.map((item) => item.data());
   const leaves = leaveSnap.docs.map((item) => item.data());
   let created = 0;

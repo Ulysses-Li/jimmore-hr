@@ -135,6 +135,8 @@ export async function getCurrentUserProfile() {
     email: user.email || "",
     department: "",
     role: "employee",
+    workMode: "office",
+    attendanceRequired: true,
     annualLeaveHours: 0,
     compensatoryLeaveHours: 0,
     isActive: true,

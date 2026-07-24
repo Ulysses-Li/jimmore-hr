@@ -6,6 +6,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { calculateHoursExcludingLunch } = require("../core");
 
 const ROLES = new Set(["employee", "manager", "admin"]);
+const WORK_MODES = new Set(["office", "field"]);
 const REQUEST_COLLECTIONS = new Set(["leaveRequests", "overtimeRequests"]);
 const REVIEW_STATUSES = new Set(["approved", "rejected"]);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -47,6 +48,8 @@ function publicUserState(user) {
     managerId: user.managerId || "",
     proxyUserId: user.proxyUserId || "",
     defaultShiftId: user.defaultShiftId || "",
+    workMode: WORK_MODES.has(user.workMode) ? user.workMode : "office",
+    attendanceRequired: user.attendanceRequired !== false,
     annualLeaveHours: Number(user.annualLeaveHours || 0),
     compensatoryLeaveHours: Number(user.compensatoryLeaveHours || 0),
     isActive: user.isActive !== false
@@ -65,9 +68,12 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
     requireAdmin(admin);
     const name = cleanText(request.data?.name, 120);
     const department = cleanText(request.data?.department, 120);
+    const workMode = cleanText(request.data?.workMode, 20) || "office";
+    const attendanceRequired = request.data?.attendanceRequired !== false;
     const email = cleanText(request.data?.email, 320).toLowerCase();
     const password = String(request.data?.password || "");
-    if (!name || !department || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!name || !department || !WORK_MODES.has(workMode)
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new HttpsError("invalid-argument", "姓名、部門及有效 Email 都是必填欄位。");
     }
     if (password.length < 8) {
@@ -90,6 +96,8 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
         email,
         department,
         role: "employee",
+        workMode,
+        attendanceRequired,
         annualLeaveHours: 56,
         compensatoryLeaveHours: 0,
         isActive: true,
@@ -124,7 +132,9 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
     const role = cleanText(request.data?.role, 20);
     const name = cleanText(request.data?.name, 120);
     const department = cleanText(request.data?.department, 120);
-    if (!name || !department || !ROLES.has(role)) {
+    const workMode = cleanText(request.data?.workMode, 20) || "office";
+    const attendanceRequired = request.data?.attendanceRequired !== false;
+    if (!name || !department || !ROLES.has(role) || !WORK_MODES.has(workMode)) {
       throw new HttpsError("invalid-argument", "姓名、部門或角色設定不正確。");
     }
     const isActive = request.data?.isActive !== false;
@@ -140,6 +150,8 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
       name,
       department,
       role,
+      workMode,
+      attendanceRequired,
       managerId,
       managerName: await relatedUserName(managerId),
       proxyUserId,

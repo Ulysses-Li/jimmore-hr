@@ -407,6 +407,14 @@ function updateActionState(rows) {
   checkOutBtn.classList.toggle("btn-warning", nextAction === "checkOut");
   checkOutBtn.classList.toggle("btn-outline-warning", nextAction !== "checkOut");
 
+  if (profile.attendanceRequired === false) {
+    hint.className = "alert alert-info py-2 mb-3";
+    hint.textContent = "此帳號已設定為免打卡人員，不需要進行簽到或簽退。";
+    checkInBtn.disabled = true;
+    checkOutBtn.disabled = true;
+    return;
+  }
+
   if (!assignedShift) {
     hint.className = "alert alert-warning py-2 mb-3";
     hint.textContent = "尚未分配班別，請管理員先到員工管理設定。";

@@ -58,8 +58,19 @@ function validateCoordinates(location) {
   return { latitude, longitude, accuracy };
 }
 
-function decideLocation(locationInput, workSites = [], fieldAssignments = []) {
+function decideLocation(locationInput, workSites = [], fieldAssignments = [], options = {}) {
   const location = validateCoordinates(locationInput);
+  if (options.unrestricted === true) {
+    return {
+      allowed: true,
+      reason: "unrestricted_field_staff",
+      location,
+      distanceM: null,
+      workSiteId: null,
+      fieldAssignmentId: null,
+      matchedName: ""
+    };
+  }
   const candidates = [
     ...workSites.filter((site) => site.active !== false).map((site) => ({
       kind: "workSite",

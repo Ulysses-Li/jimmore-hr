@@ -45,6 +45,19 @@ test("field assignment is reported separately from a work site", () => {
   assert.equal(result.fieldAssignmentId, "field-1");
 });
 
+test("field staff can punch from any valid GPS location", () => {
+  const result = decideLocation(
+    { latitude: 23.5, longitude: 120.5, accuracy: 80 },
+    [],
+    [],
+    { unrestricted: true }
+  );
+  assert.equal(result.allowed, true);
+  assert.equal(result.reason, "unrestricted_field_staff");
+  assert.equal(result.workSiteId, null);
+  assert.equal(result.fieldAssignmentId, null);
+});
+
 test("late and early-leave status use server time and grace", () => {
   const shift = { workStart: "09:00", workEnd: "18:00" };
   assert.equal(resolvePunchStatus("checkIn", new Date("2026-07-23T01:04:00Z"), shift, 5), "normal");

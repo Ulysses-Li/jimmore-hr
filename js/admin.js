@@ -169,6 +169,20 @@ async function renderEmployees() {
             <input class="form-control" id="createEmployeeDepartment" list="departmentOptions">
           </div>
           <div class="col-md-6">
+            <label class="form-label" for="createEmployeeWorkMode">工作型態</label>
+            <select class="form-select" id="createEmployeeWorkMode">
+              <option value="office" selected>內勤（限公司打卡據點）</option>
+              <option value="field">外勤（目前不限打卡據點）</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="createEmployeeAttendanceRequired">出勤打卡</label>
+            <select class="form-select" id="createEmployeeAttendanceRequired">
+              <option value="required" selected>需要打卡</option>
+              <option value="exempt">免打卡</option>
+            </select>
+          </div>
+          <div class="col-md-6">
             <label class="form-label" for="createEmployeeEmail">Email</label>
             <input class="form-control" id="createEmployeeEmail" type="email" autocomplete="off" required>
           </div>
@@ -230,6 +244,7 @@ async function renderEmployees() {
         const field = input.dataset.field;
         if (input.type === "checkbox") payload[field] = input.checked;
         else if (input.type === "number") payload[field] = Number(input.value || 0);
+        else if (field === "attendanceRequired") payload[field] = input.value === "true";
         else payload[field] = input.value.trim();
       });
       button.disabled = true;
@@ -263,6 +278,8 @@ function employeeEditorCard(row, users, shifts) {
       <div class="employee-editor-actions">
         <span class="badge text-bg-${enabled ? "success" : "secondary"}">${enabled ? "啟用" : "停用"}</span>
         <span class="badge text-bg-light text-dark">${escapeHtml(role)}</span>
+        <span class="badge text-bg-light text-dark">${row.workMode === "field" ? "外勤" : "內勤"}</span>
+        <span class="badge text-bg-light text-dark">${row.attendanceRequired === false ? "免打卡" : "需打卡"}</span>
         <button class="btn btn-sm btn-primary" data-save-user>儲存</button>
       </div>
     </div>
@@ -300,6 +317,20 @@ function employeeEditorCard(row, users, shifts) {
       </div>
       <div class="employee-editor-section employee-editor-work">
         <div class="employee-editor-section-title">班別與假別</div>
+        <div class="employee-field">
+          <label class="form-label">出勤打卡</label>
+          <select class="form-select form-select-sm" data-field="attendanceRequired">
+            <option value="true" ${row.attendanceRequired !== false ? "selected" : ""}>需要打卡</option>
+            <option value="false" ${row.attendanceRequired === false ? "selected" : ""}>免打卡</option>
+          </select>
+        </div>
+        <div class="employee-field">
+          <label class="form-label">工作型態</label>
+          <select class="form-select form-select-sm" data-field="workMode">
+            <option value="office" ${row.workMode !== "field" ? "selected" : ""}>內勤（限公司打卡據點）</option>
+            <option value="field" ${row.workMode === "field" ? "selected" : ""}>外勤（目前不限打卡據點）</option>
+          </select>
+        </div>
         <div class="employee-field">
           <label class="form-label">預設班別</label>
           <select class="form-select form-select-sm" data-field="defaultShiftId">
@@ -525,7 +556,9 @@ function buildTodayMissingClockInUsers(users, attendanceRows, settings, today) {
   );
   const shifts = normalizeWorkShifts(settings);
   return users
-    .filter((user) => user.isActive !== false && !checkedInUserIds.has(user.id))
+    .filter((user) => user.isActive !== false
+      && user.attendanceRequired !== false
+      && !checkedInUserIds.has(user.id))
     .map((user) => {
       const shift = shifts.find((item) => item.id === user.defaultShiftId) || shifts[0] || {};
       return { ...user, shiftName: shift.name || "未設定班別", workStart: shift.workStart || "-" };
@@ -777,10 +810,12 @@ function bindCreateEmployeeForm() {
     const department = qs("#createEmployeeDepartment").value.trim();
     const email = qs("#createEmployeeEmail").value.trim();
     const password = qs("#createEmployeePassword").value;
+    const workMode = qs("#createEmployeeWorkMode").value;
+    const attendanceRequired = qs("#createEmployeeAttendanceRequired").value !== "exempt";
     submitButton.disabled = true;
 
     try {
-      await createEmployeeAccount({ name, department, email, password });
+      await createEmployeeAccount({ name, department, email, password, workMode, attendanceRequired });
       showToast(`已建立 ${name} 的員工帳號`, "success");
       form.reset();
       await renderEmployees();
@@ -791,8 +826,8 @@ function bindCreateEmployeeForm() {
   });
 }
 
-async function createEmployeeAccount({ name, department, email, password }) {
-  await callSecureFunction("createEmployeeAccount", { name, department, email, password });
+async function createEmployeeAccount({ name, department, email, password, workMode, attendanceRequired }) {
+  await callSecureFunction("createEmployeeAccount", { name, department, email, password, workMode, attendanceRequired });
 }
 
 function authErrorMessage(error) {
@@ -819,7 +854,7 @@ function openAttendancePrintView(user, summaryRows, attendanceRows, approvedLeav
 
 function openCompanyAttendancePrintView(users, allAttendanceRows, approvedLeaveRows, settings, period, correctDailyHours = false) {
   const activeUsers = users
-    .filter((user) => user.isActive !== false)
+    .filter((user) => user.isActive !== false && user.attendanceRequired !== false)
     .sort((a, b) => String(a.department || "").localeCompare(String(b.department || ""), "zh-Hant")
       || String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
   if (!activeUsers.length) {
@@ -1176,7 +1211,7 @@ function downloadAttendanceCsv(summaryRows, user, period) {
 
 function downloadCompanyAttendanceWorkbook(users, allAttendanceRows, approvedLeaveRows, settings, period) {
   const activeUsers = users
-    .filter((user) => user.isActive !== false)
+    .filter((user) => user.isActive !== false && user.attendanceRequired !== false)
     .sort((a, b) => String(a.department || "").localeCompare(String(b.department || ""), "zh-Hant")
       || String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "zh-Hant"));
   if (!activeUsers.length) {
@@ -1382,7 +1417,7 @@ function buildAttendanceSummaryRows(attendanceRows, user, settings, approvedLeav
     groups.get(date).push(row);
   });
 
-  if (period) {
+  if (period && user.attendanceRequired !== false) {
     expectedWorkDates(period, settings).forEach((date) => {
       if (!groups.has(date)) groups.set(date, []);
     });

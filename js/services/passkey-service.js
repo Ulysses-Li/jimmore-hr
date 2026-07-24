@@ -25,7 +25,7 @@ function passkeyOperationError(error) {
     return new Error("這部裝置可能已註冊過 Passkey；請重新整理，若仍失敗請由管理員重設舊憑證。");
   }
   if (errorName === "SecurityError") {
-    return new Error("Passkey 網域驗證失敗，請確認使用正式網址 jimmore-workhub.web.app。");
+    return new Error("Passkey 網域驗證失敗，請確認使用正式網址 workhub.cwli.dev。");
   }
   return error instanceof Error ? error : new Error("Passkey 操作未完成，請重新整理後再試。");
 }

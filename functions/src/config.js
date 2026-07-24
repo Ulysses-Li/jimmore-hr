@@ -6,10 +6,10 @@ function csv(value) {
 
 const REGION = process.env.FUNCTIONS_REGION || "asia-east1";
 const TIME_ZONE = process.env.TIME_ZONE || "Asia/Taipei";
-const RP_ID = process.env.WEBAUTHN_RP_ID || "jimmore-workhub.web.app";
+const RP_ID = process.env.WEBAUTHN_RP_ID || "workhub.cwli.dev";
 const RP_NAME = process.env.WEBAUTHN_RP_NAME || "Jimmore WorkHub";
 const EXPECTED_ORIGINS = csv(process.env.WEBAUTHN_ORIGINS
-  || "https://jimmore-workhub.web.app,https://jimmore-workhub.firebaseapp.com");
+  || "https://workhub.cwli.dev");
 const CHALLENGE_TTL_MS = Number(process.env.CHALLENGE_TTL_SECONDS || 300) * 1000;
 
 if (!EXPECTED_ORIGINS.length) {

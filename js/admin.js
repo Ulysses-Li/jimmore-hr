@@ -313,9 +313,6 @@ function employeeEditorCard(row, users, shifts) {
           <label class="form-label">職務代理人</label>
           <select class="form-select form-select-sm" data-field="proxyUserId">${proxyOptions(users, row)}</select>
         </div>
-      </div>
-      <div class="employee-editor-section employee-editor-work">
-        <div class="employee-editor-section-title">班別與假別</div>
         <div class="employee-field">
           <label class="form-label">工作型態</label>
           <select class="form-select form-select-sm" data-field="workMode">
@@ -323,6 +320,9 @@ function employeeEditorCard(row, users, shifts) {
             <option value="field" ${row.workMode === "field" ? "selected" : ""}>外勤（目前不限打卡據點）</option>
           </select>
         </div>
+      </div>
+      <div class="employee-editor-section employee-editor-work">
+        <div class="employee-editor-section-title">班別與假別</div>
         <div class="employee-field">
           <label class="form-label">預設班別</label>
           <select class="form-select form-select-sm" data-field="defaultShiftId" data-fallback-shift-id="${row.defaultShiftId || shifts[0].id}">

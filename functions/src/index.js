@@ -75,20 +75,17 @@ exports.getEmployeeDirectory = callable(async function getEmployeeDirectory(requ
 });
 
 exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
-  const viewer = await profileFor(request.auth.uid);
+  await profileFor(request.auth.uid);
   const [leaveSnap, attendanceSnap] = await Promise.all([
     db.collection("leaveRequests").where("status", "==", "approved").get(),
     db.collection("attendance").where("type", "==", "checkIn").where("status", "==", "late").get()
   ]);
-  const visibleDepartment = viewer.role === "admin" ? null : viewer.department || "";
-  const isVisible = (data) => !visibleDepartment || data.department === visibleDepartment;
   const toIso = (value) => {
     const date = timestampDate(value);
     return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
   };
   const leaves = leaveSnap.docs
     .map((docSnap) => docSnap.data())
-    .filter(isVisible)
     .map((leave) => ({
       userId: cleanText(leave.userId, 128),
       userName: cleanText(leave.userName, 100),
@@ -100,7 +97,6 @@ exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
     .filter((leave) => leave.startTime && leave.endTime);
   const lateRecords = attendanceSnap.docs
     .map((docSnap) => docSnap.data())
-    .filter(isVisible)
     .map((record) => ({
       userId: cleanText(record.userId, 128),
       userName: cleanText(record.userName, 100),

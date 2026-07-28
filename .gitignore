@@ -1,4 +1,5 @@
 Jimmore_logo.ico
+.vscode/
 functions/node_modules/
 node_modules/
 dist/

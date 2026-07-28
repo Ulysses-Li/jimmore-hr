@@ -105,13 +105,22 @@ qs("#pageContent").innerHTML = `
       </div>
     </div>
     <div class="col-lg-7">
-      <div class="panel p-3 h-100">
-        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+      <div class="panel p-3 h-100 attendance-exception-panel">
+        <div class="attendance-exception-header">
           <div>
-            <h2 class="h5 mb-1">未打卡原因待辦</h2>
-            <div class="small muted">補打卡不會刪除案件，仍需填寫原因並由主管審核。</div>
+            <h2 class="h5 mb-1">未打卡處理</h2>
+            <div class="small muted">填寫實際到達時間與原因後，送交主管審核。</div>
           </div>
-          <span class="badge text-bg-secondary" id="exceptionCount">0 筆</span>
+          <span class="attendance-exception-count" id="exceptionCount">0 筆待處理</span>
+        </div>
+        <div class="attendance-exception-note">
+          <span aria-hidden="true">i</span>
+          補打卡仍會保留案件與審核紀錄。
+        </div>
+        <div class="attendance-exception-tabs" role="tablist" aria-label="未打卡案件分類">
+          <button type="button" class="is-active" data-exception-tab="action" role="tab">待處理 <span>0</span></button>
+          <button type="button" data-exception-tab="review" role="tab">審核中 <span>0</span></button>
+          <button type="button" data-exception-tab="completed" role="tab">已完成 <span>0</span></button>
         </div>
         <div id="exceptionList"><div class="muted">載入中...</div></div>
       </div>
@@ -525,6 +534,78 @@ function escapeHtml(value) {
   })[char]);
 }
 
+const exceptionCategoryLabels = {
+  forgot: "忘記打卡",
+  device_failure: "裝置／Passkey 故障",
+  fieldwork: "外勤配置問題",
+  leave_pending: "請假尚待核准",
+  other: "其他"
+};
+
+function formatExceptionDate(value) {
+  const parts = String(value || "").split("-").map(Number);
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return escapeHtml(value || "-");
+  const weekday = ["日", "一", "二", "三", "四", "五", "六"][new Date(parts[0], parts[1] - 1, parts[2]).getDay()];
+  return `${String(parts[1]).padStart(2, "0")}/${String(parts[2]).padStart(2, "0")}（${weekday}）`;
+}
+
+function exceptionCategoryOptions(selectedValue) {
+  return [
+    ["", "選擇原因"],
+    ...Object.entries(exceptionCategoryLabels)
+  ].map(([value, label]) => (
+    `<option value="${escapeHtml(value)}"${selectedValue === value ? " selected" : ""}>${escapeHtml(label)}</option>`
+  )).join("");
+}
+
+function employeeExceptionCard(row, index, editable) {
+  const status = exceptionStatusLabels[row.status] || row.status;
+  const statusClass = row.status === "overdue"
+    ? "is-overdue"
+    : row.status === "approved" ? "is-approved" : row.status === "rejected" ? "is-rejected" : "";
+  const workStart = row.workStart || row.shiftName || "09:00";
+  return `<details class="attendance-exception-case ${statusClass}" data-case-id="${escapeHtml(row.id)}"${editable && index === 0 ? " open" : ""}>
+    <summary class="attendance-exception-summary">
+      <time datetime="${escapeHtml(row.date)}">${formatExceptionDate(row.date)}</time>
+      <span class="attendance-exception-title">
+        <strong>上班未打卡</strong>
+        <small>${escapeHtml(row.shiftName || "當日班別")} · 應到 ${escapeHtml(workStart)}</small>
+      </span>
+      <span class="attendance-exception-status">${escapeHtml(status)}</span>
+      <span class="attendance-exception-toggle" aria-hidden="true">展開</span>
+    </summary>
+    <div class="attendance-exception-body">
+      ${row.reviewNote ? `<div class="attendance-exception-reply"><strong>主管回覆</strong><span>${escapeHtml(row.reviewNote)}</span></div>` : ""}
+      ${editable ? `<form data-exception-form>
+        <div class="attendance-exception-fields">
+          <label>
+            <span>未打卡原因</span>
+            <select class="form-select" name="category" required>
+              ${exceptionCategoryOptions(row.reasonCategory || "")}
+            </select>
+          </label>
+          <label>
+            <span>實際到達時間</span>
+            <input class="form-control" type="time" name="requestedTime" value="${escapeHtml(row.requestedTime || row.workStart || "09:00")}" required>
+          </label>
+          <label class="attendance-exception-reason">
+            <span>補充說明</span>
+            <textarea class="form-control" name="reason" maxlength="1000" rows="2" placeholder="請簡要說明未打卡原因" required>${escapeHtml(row.reason || "")}</textarea>
+          </label>
+        </div>
+        <div class="attendance-exception-actions">
+          <span>送出後可在「審核中」查看進度</span>
+          <button class="btn btn-primary">送出審核</button>
+        </div>
+      </form>` : `<dl class="attendance-exception-facts">
+        <div><dt>填報原因</dt><dd>${escapeHtml(exceptionCategoryLabels[row.reasonCategory] || row.reasonCategory || "未分類")}</dd></div>
+        <div><dt>實際到達</dt><dd>${escapeHtml(row.requestedTime || row.workStart || "-")}</dd></div>
+        <div><dt>補充說明</dt><dd>${escapeHtml(row.reason || "尚無說明")}</dd></div>
+      </dl>`}
+    </div>
+  </details>`;
+}
+
 async function renderPasskeyStatus() {
   const snap = await getDocs(query(
     collection(db, "passkeyEnrollmentRequests"),
@@ -549,32 +630,50 @@ async function renderExceptions() {
   const rows = snap.docs.map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const openRows = rows.filter((row) => ["pending_employee_reason", "needs_more_info", "overdue"].includes(row.status));
+  const reviewRows = rows.filter((row) => row.status === "pending_manager_review");
+  const completedRows = rows.filter((row) => !openRows.includes(row) && !reviewRows.includes(row));
   qs("#exceptionCount").textContent = `${openRows.length} 筆待處理`;
-  qs("#exceptionList").innerHTML = rows.length ? rows.slice(0, 8).map((row) => {
-    const editable = ["pending_employee_reason", "needs_more_info", "overdue"].includes(row.status);
-    return `<section class="border rounded p-3 mb-2 exception-card" data-case-id="${escapeHtml(row.id)}">
-      <div class="d-flex justify-content-between gap-2 mb-2">
-        <div><strong>${escapeHtml(row.date)}</strong> · ${escapeHtml(row.shiftName || row.workStart || "班別")}</div>
-        <span class="badge text-bg-${editable ? "warning" : "secondary"}">${escapeHtml(exceptionStatusLabels[row.status] || row.status)}</span>
-      </div>
-      ${row.reviewNote ? `<div class="alert alert-light py-2 small">主管回覆：${escapeHtml(row.reviewNote)}</div>` : ""}
-      ${editable ? `<form data-exception-form>
-        <div class="row g-2">
-          <div class="col-md-3"><select class="form-select form-select-sm" name="category" required>
-            <option value="">選擇原因</option>
-            <option value="forgot">忘記打卡</option>
-            <option value="device_failure">裝置／Passkey 故障</option>
-            <option value="fieldwork">外勤配置問題</option>
-            <option value="leave_pending">請假尚待核准</option>
-            <option value="other">其他</option>
-          </select></div>
-          <div class="col-md-2"><input class="form-control form-control-sm" type="time" name="requestedTime" value="${escapeHtml(row.requestedTime || row.workStart || "09:00")}" aria-label="實際到達時間" required></div>
-          <div class="col-md-5"><input class="form-control form-control-sm" name="reason" maxlength="1000" placeholder="請說明未打卡原因" value="${escapeHtml(row.reason || "")}" required></div>
-          <div class="col-md-2 d-grid"><button class="btn btn-sm btn-primary">送主管審核</button></div>
-        </div>
-      </form>` : `<div class="small">${escapeHtml(row.reason || "尚無說明")}</div>`}
-    </section>`;
-  }).join("") : `<div class="muted">目前沒有未打卡案件</div>`;
+  const groups = [
+    ["action", openRows, "目前沒有需要你處理的案件"],
+    ["review", reviewRows, "目前沒有審核中的案件"],
+    ["completed", completedRows, "目前沒有已完成的案件"]
+  ];
+  const defaultTab = openRows.length ? "action" : reviewRows.length ? "review" : "completed";
+  document.querySelectorAll("[data-exception-tab]").forEach((button) => {
+    const group = groups.find(([name]) => name === button.dataset.exceptionTab);
+    button.querySelector("span").textContent = group[1].length;
+    button.classList.toggle("is-active", button.dataset.exceptionTab === defaultTab);
+    button.setAttribute("aria-selected", String(button.dataset.exceptionTab === defaultTab));
+  });
+  qs("#exceptionList").innerHTML = groups.map(([name, groupRows, emptyText]) => `
+    <div class="attendance-exception-list" data-exception-panel="${name}"${name === defaultTab ? "" : " hidden"}>
+      ${groupRows.length
+        ? groupRows.slice(0, 8).map((row, index) => employeeExceptionCard(row, index, name === "action")).join("")
+        : `<div class="attendance-exception-empty">${escapeHtml(emptyText)}</div>`}
+    </div>
+  `).join("");
+
+  document.querySelectorAll("[data-exception-tab]").forEach((button) => {
+    button.onclick = () => {
+      document.querySelectorAll("[data-exception-tab]").forEach((item) => {
+        const active = item === button;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-selected", String(active));
+      });
+      qs("#exceptionList").querySelectorAll("[data-exception-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.exceptionPanel !== button.dataset.exceptionTab;
+      });
+    };
+  });
+
+  qs("#exceptionList").querySelectorAll(".attendance-exception-case").forEach((details) => {
+    details.addEventListener("toggle", () => {
+      if (!details.open) return;
+      details.closest("[data-exception-panel]").querySelectorAll(".attendance-exception-case[open]").forEach((item) => {
+        if (item !== details) item.open = false;
+      });
+    });
+  });
 
   qs("#exceptionList").querySelectorAll("[data-exception-form]").forEach((form) => {
     form.addEventListener("submit", async (event) => {

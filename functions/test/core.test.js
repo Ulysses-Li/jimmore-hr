@@ -58,6 +58,17 @@ test("field staff can punch from any valid GPS location", () => {
   assert.equal(result.fieldAssignmentId, null);
 });
 
+test("field staff are rejected when GPS accuracy is too low", () => {
+  const result = decideLocation(
+    { latitude: 23.5, longitude: 120.5, accuracy: 220 },
+    [],
+    [],
+    { unrestricted: true, maxAccuracyM: 150 }
+  );
+  assert.equal(result.allowed, false);
+  assert.equal(result.reason, "gps_accuracy_too_low");
+});
+
 test("late and early-leave status use server time and grace", () => {
   const shift = { workStart: "09:00", workEnd: "18:00" };
   assert.equal(resolvePunchStatus("checkIn", new Date("2026-07-23T01:04:00Z"), shift, 5), "normal");

@@ -138,7 +138,7 @@ async function activeFieldAssignments(userId, now) {
 
 async function currentLocationDecision(employee, now, location) {
   if (employee.workMode === "field") {
-    return decideLocation(location, [], [], { unrestricted: true });
+    return decideLocation(location, [], [], { unrestricted: true, maxAccuracyM: 150 });
   }
   const [siteSnap, assignments] = await Promise.all([
     db.collection("workSites").where("active", "==", true).get(),

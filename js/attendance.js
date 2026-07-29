@@ -45,7 +45,8 @@ qs("#pageContent").innerHTML = `
           ${assignedShift ? "" : `<div class="form-text text-danger">請管理員先到員工管理分配預設班別。</div>`}
         </div>
         <div class="small muted mb-3">
-          打卡需要瀏覽器定位權限。若看到定位被拒絕，請點網址列左側圖示，將位置權限改為允許後重新整理。
+          打卡必須取得符合精度要求的 GPS 定位。若個人手機無法正常定位，請改用公務機；
+          共用公務機使用完畢後務必登出。
         </div>
         <div class="d-grid gap-2">
           <button class="btn btn-success btn-lg" id="checkInBtn">上班簽到</button>

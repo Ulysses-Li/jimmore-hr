@@ -61,6 +61,14 @@ function validateCoordinates(location) {
 function decideLocation(locationInput, workSites = [], fieldAssignments = [], options = {}) {
   const location = validateCoordinates(locationInput);
   if (options.unrestricted === true) {
+    const maxAccuracyM = Number(options.maxAccuracyM || 150);
+    if (location.accuracy > maxAccuracyM) {
+      return {
+        allowed: false,
+        reason: "gps_accuracy_too_low",
+        location
+      };
+    }
     return {
       allowed: true,
       reason: "unrestricted_field_staff",

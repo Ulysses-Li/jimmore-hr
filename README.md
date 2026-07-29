@@ -7,6 +7,7 @@ Jimmore 的 Web 人事出勤平台。前端原始碼由 GitHub 管理，日常�
 - Email / Password 登入與員工帳號建立
 - 角色導向頁面：employee、manager、admin
 - Firebase 登入驗證 + GPS 簽到 / 簽退
+- GPS 精度不足時拒絕打卡；個人手機定位不佳者改用公務機
 - 遲到、早退、工時不足與滿 8 小時判定
 - 請假申請與審核
 - 加班申請與審核，核准後可轉補休

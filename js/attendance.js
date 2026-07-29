@@ -19,13 +19,9 @@ import {
   hoursBetween,
   showToast
 } from "./app.js";
-import {
-  authenticateAndPunch,
-  registerApprovedPasskey,
-  requestPasskeyEnrollment
-} from "./passkeys.js";
 import { callSecureFunction } from "./app.js";
 import { acquirePunchLocation } from "./services/geolocation-service.js";
+import { submitPunch } from "./services/attendance-service.js";
 
 mountPageShell("出勤打卡", "GPS 簽到簽退與每日工時判定");
 const profile = await requireAuth();
@@ -89,22 +85,7 @@ qs("#pageContent").innerHTML = `
     </div>
   </div>
   <div class="row g-3 mt-1">
-    <div class="col-lg-5">
-      <div class="panel p-3 h-100">
-        <h2 class="h5 mb-2">Passkey 生物辨識</h2>
-        <p class="small muted">第一次使用先提出裝置申請，由主管當面核准後，再完成 Face ID、指紋或 Windows Hello 註冊。</p>
-        <div class="d-flex gap-2 flex-wrap">
-          <button class="btn btn-outline-primary" id="requestPasskeyBtn">申請註冊此裝置</button>
-          <button class="btn btn-primary" id="registerPasskeyBtn">完成已核准註冊</button>
-        </div>
-        <div class="form-text mt-2" id="passkeyStatus">正在讀取註冊狀態...</div>
-        <div class="small muted mt-2">
-          iPhone 若無法叫出 Face ID：請改用 Safari 一般分頁，確認已設定 Face ID、解鎖密碼，
-          並開啟 iCloud「密碼與鑰匙圈」。
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-7">
+    <div class="col-12">
       <div class="panel p-3 h-100 attendance-exception-panel">
         <div class="attendance-exception-header">
           <div>
@@ -162,7 +143,7 @@ async function punch(type) {
 
     const location = await acquirePunchLocation();
     hideLocationPermissionHelp();
-    await authenticateAndPunch(type, location);
+    await submitPunch(type, location);
     showToast(`${type === "checkIn" ? "上班簽到" : "下班簽退"}完成`, "success");
   } catch (error) {
     if (isLocationPermissionDenied(error)) showLocationPermissionHelp();
@@ -536,7 +517,7 @@ function escapeHtml(value) {
 
 const exceptionCategoryLabels = {
   forgot: "忘記打卡",
-  device_failure: "裝置／Passkey 故障",
+  device_failure: "裝置故障",
   fieldwork: "外勤配置問題",
   leave_pending: "請假尚待核准",
   other: "其他"
@@ -604,22 +585,6 @@ function employeeExceptionCard(row, index, editable) {
       </dl>`}
     </div>
   </details>`;
-}
-
-async function renderPasskeyStatus() {
-  const snap = await getDocs(query(
-    collection(db, "passkeyEnrollmentRequests"),
-    where("userId", "==", profile.id)
-  ));
-  const row = snap.docs.map((item) => item.data()).sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt))[0];
-  const labels = {
-    pending: "等待主管當面核准",
-    approved: "主管已核准，請按「完成已核准註冊」",
-    registered: "此帳號已有可用 Passkey",
-    reset: "原 Passkey 已重設，請重新提出申請"
-  };
-  qs("#passkeyStatus").textContent = row ? labels[row.status] || row.status : "尚未提出裝置註冊申請";
-  qs("#registerPasskeyBtn").disabled = row?.status !== "approved";
 }
 
 async function renderExceptions() {
@@ -698,20 +663,6 @@ async function renderExceptions() {
   });
 }
 
-qs("#requestPasskeyBtn").addEventListener("click", async () => {
-  const button = qs("#requestPasskeyBtn");
-  button.disabled = true;
-  try {
-    await requestPasskeyEnrollment(`${navigator.platform || "裝置"} · ${new Date().toLocaleDateString("zh-TW")}`);
-    showToast("裝置申請已送出，請主管當面核准", "success");
-    await renderPasskeyStatus();
-  } catch (error) {
-    showToast(error.message, "danger");
-  } finally {
-    button.disabled = false;
-  }
-});
-
 qs("#retryLocationBtn").addEventListener("click", async () => {
   const button = qs("#retryLocationBtn");
   button.disabled = true;
@@ -727,20 +678,6 @@ qs("#retryLocationBtn").addEventListener("click", async () => {
   }
 });
 
-qs("#registerPasskeyBtn").addEventListener("click", async () => {
-  const button = qs("#registerPasskeyBtn");
-  button.disabled = true;
-  try {
-    await registerApprovedPasskey();
-    showToast("Passkey 註冊完成，之後每次打卡都會要求生物辨識", "success");
-    await renderPasskeyStatus();
-  } catch (error) {
-    showToast(error.message, "danger");
-  } finally {
-    button.disabled = false;
-  }
-});
-
 qs("#checkInBtn").addEventListener("click", () => punch("checkIn"));
 qs("#checkOutBtn").addEventListener("click", () => punch("checkOut"));
-await Promise.all([render(), renderPasskeyStatus(), renderExceptions()]);
+await Promise.all([render(), renderExceptions()]);

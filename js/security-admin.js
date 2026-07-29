@@ -32,15 +32,9 @@ function scopedQuery(name, profile, extra = null) {
 }
 
 async function renderAttendanceSecurity(profile, content) {
-  const [casesSnap, enrollmentsSnap] = await Promise.all([
-    getDocs(scopedQuery("attendanceExceptions", profile)),
-    getDocs(scopedQuery("passkeyEnrollmentRequests", profile, where("status", "==", "pending")))
-  ]);
+  const casesSnap = await getDocs(scopedQuery("attendanceExceptions", profile));
   const cases = casesSnap.docs.map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const enrollments = enrollmentsSnap.docs
-    .map((item) => ({ id: item.id, ...item.data() }))
-    .filter((item) => item.status === "pending");
   const pendingReviewCount = cases.filter((item) => item.status === "pending_manager_review").length;
   const attentionStatuses = new Set(["pending_manager_review", "needs_more_info"]);
   const attentionCount = cases.filter((item) => attentionStatuses.has(item.status)).length;
@@ -59,20 +53,6 @@ async function renderAttendanceSecurity(profile, content) {
   const host = document.createElement("div");
   host.id = "attendanceSecurityPanel";
   host.innerHTML = `
-    <div class="panel p-3 mb-3">
-      <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
-        <div><h2 class="h5 mb-1">Passkey 裝置核准</h2><div class="small muted">主管須當面確認申請人與裝置後才能核准。</div></div>
-        <span class="badge text-bg-${enrollments.length ? "warning" : "success"}">${enrollments.length} 筆待核准</span>
-      </div>
-      <div class="table-responsive"><table class="table align-middle mb-0">
-        <thead><tr><th>員工</th><th>部門</th><th>裝置</th><th>申請時間</th><th></th></tr></thead>
-        <tbody>${enrollments.length ? enrollments.map((row) => `<tr>
-          <td>${escapeHtml(row.userName || row.userId)}</td><td>${escapeHtml(row.department || "-")}</td>
-          <td>${escapeHtml(row.deviceLabel || "個人裝置")}</td><td>${fmtDateTime(row.requestedAt)}</td>
-          <td><button class="btn btn-sm btn-primary" data-approve-passkey="${escapeHtml(row.userId)}">當面確認並核准</button></td>
-        </tr>`).join("") : `<tr><td colspan="5" class="muted">目前沒有待核准裝置</td></tr>`}</tbody>
-      </table></div>
-    </div>
     <div class="panel p-3 mb-3">
       <div class="d-flex justify-content-between align-items-center gap-3">
         <div>
@@ -134,19 +114,6 @@ async function renderAttendanceSecurity(profile, content) {
     </div>`;
   content.insertBefore(host, content.firstChild);
 
-  host.querySelectorAll("[data-approve-passkey]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      button.disabled = true;
-      try {
-        await callSecureFunction("approvePasskeyEnrollment", { userId: button.dataset.approvePasskey });
-        showToast("已核准裝置，員工可完成生物辨識註冊", "success");
-        button.closest("tr").remove();
-      } catch (error) {
-        showToast(error.message, "danger");
-        button.disabled = false;
-      }
-    });
-  });
   bindCaseFilters(host);
   bindCaseReviews(host);
 }
@@ -401,9 +368,7 @@ async function renderFieldAssignments(profile, content) {
     </form>
     <div class="table-responsive mt-3"><table class="table table-sm"><thead><tr><th>員工</th><th>外勤</th><th>期間</th><th>半徑</th><th>原因</th></tr></thead><tbody>
       ${assignments.length ? assignments.slice(0, 30).map((row) => `<tr><td>${escapeHtml(row.userName)}</td><td>${escapeHtml(row.name)}</td><td>${fmtDateTime(row.startAt)} ～ ${fmtDateTime(row.endAt)}</td><td>${row.radiusM} m</td><td>${escapeHtml(row.reason)}</td></tr>`).join("") : `<tr><td colspan="5" class="muted">目前沒有外勤配置</td></tr>`}
-    </tbody></table></div>
-    <hr><h3 class="h6">Passkey 遺失／換機重設</h3>
-    <form class="row g-2" id="passkeyResetForm"><div class="col-md-4"><select class="form-select" name="userId" required><option value="">請選員工</option>${users.map((user) => `<option value="${user.id}">${escapeHtml(user.name || user.email)}</option>`).join("")}</select></div><div class="col-md-6"><input class="form-control" name="reason" placeholder="重設原因（必填）" required></div><div class="col-md-2 d-grid"><button class="btn btn-outline-danger">註銷舊 Passkey</button></div></form>`;
+    </tbody></table></div>`;
   content.appendChild(host);
   host.querySelector("#fieldAssignmentForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -421,21 +386,6 @@ async function renderFieldAssignments(profile, content) {
       location.reload();
     } catch (error) {
       showToast(error.message, "danger");
-      button.disabled = false;
-    }
-  });
-  host.querySelector("#passkeyResetForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = form.querySelector("button");
-    button.disabled = true;
-    try {
-      await callSecureFunction("resetPasskey", { userId: form.elements.userId.value, reason: form.elements.reason.value.trim() });
-      showToast("舊 Passkey 已註銷；員工需重新申請並由主管當面核准", "success");
-      form.reset();
-    } catch (error) {
-      showToast(error.message, "danger");
-    } finally {
       button.disabled = false;
     }
   });

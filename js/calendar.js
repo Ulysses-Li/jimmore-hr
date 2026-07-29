@@ -279,7 +279,8 @@ function lateEvidenceHtml(records) {
 
 function sourceLabel(source) {
   return ({
-    passkey_web: "Passkey 生物辨識打卡",
+    authenticated_gps_web: "帳號驗證＋GPS 打卡",
+    passkey_web: "舊版 Passkey 打卡",
     admin_manual_correction: "管理員補登",
     manager_approved_exception: "主管核准補登"
   })[source] || source || "系統打卡紀錄";

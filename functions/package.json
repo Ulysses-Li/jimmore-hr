@@ -11,7 +11,6 @@
     "emulators": "firebase emulators:start --only auth,firestore,functions,hosting"
   },
   "dependencies": {
-    "@simplewebauthn/server": "^13.2.2",
     "firebase-admin": "^13.4.0",
     "firebase-functions": "^6.4.0"
   },

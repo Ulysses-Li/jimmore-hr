@@ -81,11 +81,7 @@ service cloud.firestore {
     }
 
     match /passkeyEnrollmentRequests/{requestId} {
-      allow read: if owns(resource.data.userId)
-        || reviewsDepartment(resource.data.department)
-        || reviewsManager(resource.data.get('managerId', ''))
-        || reviewsEmployee(resource.data.userId);
-      allow write: if false;
+      allow read, write: if false;
     }
 
     match /passkeyCredentials/{credentialId} {

@@ -6,7 +6,7 @@ Jimmore 的 Web 人事出勤平台。前端原始碼由 GitHub 管理，日常�
 
 - Email / Password 登入與員工帳號建立
 - 角色導向頁面：employee、manager、admin
-- Passkey 生物辨識 + GPS 簽到 / 簽退
+- Firebase 登入驗證 + GPS 簽到 / 簽退
 - 遲到、早退、工時不足與滿 8 小時判定
 - 請假申請與審核
 - 加班申請與審核，核准後可轉補休
@@ -69,7 +69,7 @@ jimmore-hr/
 2. 啟用 Authentication 的 Email/Password provider。
 3. 啟用 Firestore Database。
 4. 將 Firebase Web App 設定貼到 `js/firebase-config.js`。
-5. 升級 Blaze 後部署 Functions，並設定 App Check 與正式 WebAuthn 網域。
+5. 升級 Blaze 後部署 Functions，並設定 App Check。
 6. 建立第一個帳號後，到 Firestore 的 `users/{uid}` 將 `role` 改成 `admin`。
 
 ## Firestore Collections
@@ -81,8 +81,6 @@ jimmore-hr/
 - `overtimeRequests`
 - `workSettings/default`
 - `attendanceExceptions`
-- `passkeyEnrollmentRequests`
-- `passkeyCredentials`
 - `workSites`
 - `fieldAssignments`
 - `auditEvents`
@@ -104,7 +102,7 @@ jimmore-hr/
 http://127.0.0.1:5500/jimmore-hr/login.html
 ```
 
-Live Server 可測試一般畫面、登入與 Firestore 資料。需要 App Check、Passkey 或受保護 Cloud Functions 的功能時，請使用 Firebase Emulator，或到正式測試網址驗證。
+Live Server 可測試一般畫面、登入與 Firestore 資料。需要 App Check 或受保護 Cloud Functions 的功能時，請使用 Firebase Emulator，或到正式測試網址驗證。
 
 ### 定版檢查
 

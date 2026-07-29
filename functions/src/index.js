@@ -6,16 +6,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { logger } = require("firebase-functions");
 const {
-  generateAuthenticationOptions,
-  generateRegistrationOptions,
-  verifyAuthenticationResponse,
-  verifyRegistrationResponse
-} = require("@simplewebauthn/server");
-const {
-  EXPECTED_ORIGINS,
   REGION,
-  RP_ID,
-  RP_NAME,
   TIME_ZONE
 } = require("./config");
 const { createSecurityRuntime } = require("./lib/security-runtime");
@@ -35,13 +26,10 @@ const db = getFirestore();
 const {
   audit,
   callable,
-  challengeRef,
   cleanText,
-  loadChallenge,
   profileFor,
   requireAdmin,
   requireReviewer,
-  saveChallenge,
   timestampDate
 } = createSecurityRuntime(db);
 const adminHandlers = createAdminHandlers({
@@ -138,138 +126,6 @@ function normalizedShift(profile, settings) {
     || shifts[0]
     || { id: "default", name: "日班 09:00", workStart: settings.workStart || "09:00", workEnd: settings.workEnd || "18:00" };
 }
-
-exports.requestPasskeyEnrollment = callable(async function requestPasskeyEnrollment(request) {
-  const employee = await profileFor(request.auth.uid);
-  const deviceLabel = cleanText(request.data?.deviceLabel, 80) || "個人裝置";
-  await db.doc(`passkeyEnrollmentRequests/${employee.id}`).set({
-    userId: employee.id,
-    userName: employee.name || employee.email || "",
-    department: employee.department || "",
-    managerId: employee.managerId || "",
-    deviceLabel,
-    status: "pending",
-    requestedAt: FieldValue.serverTimestamp(),
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
-  await audit("passkey.enrollment_requested", employee, { targetUserId: employee.id, department: employee.department, deviceLabel });
-  return { status: "pending" };
-});
-
-exports.approvePasskeyEnrollment = callable(async function approvePasskeyEnrollment(request) {
-  const reviewer = await profileFor(request.auth.uid);
-  const userId = cleanText(request.data?.userId, 128);
-  const employee = await profileFor(userId);
-  requireReviewer(reviewer, employee);
-  const ref = db.doc(`passkeyEnrollmentRequests/${userId}`);
-  const snap = await ref.get();
-  if (!snap.exists || snap.data().status !== "pending") throw new HttpsError("failed-precondition", "沒有待核准的裝置申請。");
-  await ref.update({
-    status: "approved",
-    approvedBy: reviewer.id,
-    approvedByName: reviewer.name || reviewer.email || "",
-    approvedAt: FieldValue.serverTimestamp(),
-    approvalExpiresAt: Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
-    updatedAt: FieldValue.serverTimestamp()
-  });
-  await audit("passkey.enrollment_approved", reviewer, { targetUserId: userId, department: employee.department });
-  return { status: "approved" };
-});
-
-exports.beginPasskeyRegistration = callable(async function beginPasskeyRegistration(request) {
-  const employee = await profileFor(request.auth.uid);
-  const enrollment = await db.doc(`passkeyEnrollmentRequests/${employee.id}`).get();
-  if (!enrollment.exists || enrollment.data().status !== "approved") {
-    throw new HttpsError("failed-precondition", "裝置註冊尚未經主管核准。");
-  }
-  if (timestampDate(enrollment.data().approvalExpiresAt).getTime() < Date.now()) {
-    throw new HttpsError("deadline-exceeded", "主管核准已逾期，請重新申請。");
-  }
-  const credentials = await db.collection("passkeyCredentials").where("userId", "==", employee.id).get();
-  const options = await generateRegistrationOptions({
-    rpName: RP_NAME,
-    rpID: RP_ID,
-    userName: employee.email || employee.id,
-    userDisplayName: employee.name || employee.email || employee.id,
-    userID: Buffer.from(employee.id, "utf8"),
-    attestationType: "none",
-    excludeCredentials: credentials.docs.filter((docSnap) => docSnap.data().status === "active").map((docSnap) => ({
-      id: docSnap.id,
-      transports: docSnap.data().transports || []
-    })),
-    authenticatorSelection: {
-      authenticatorAttachment: "platform",
-      residentKey: "preferred",
-      userVerification: "required"
-    }
-  });
-  await saveChallenge(employee.id, "registration", options.challenge);
-  return options;
-});
-
-exports.finishPasskeyRegistration = callable(async function finishPasskeyRegistration(request) {
-  const employee = await profileFor(request.auth.uid);
-  const challenge = await loadChallenge(employee.id, "registration");
-  const response = request.data?.response;
-  if (!response?.id) throw new HttpsError("invalid-argument", "缺少 Passkey 註冊結果。");
-  const verification = await verifyRegistrationResponse({
-    response,
-    expectedChallenge: challenge.challenge,
-    expectedOrigin: EXPECTED_ORIGINS,
-    expectedRPID: RP_ID,
-    requireUserVerification: true
-  });
-  if (!verification.verified || !verification.registrationInfo) throw new HttpsError("permission-denied", "Passkey 驗證失敗。");
-  const info = verification.registrationInfo;
-  const credential = info.credential || {
-    id: response.id,
-    publicKey: info.credentialPublicKey,
-    counter: info.counter,
-    transports: response.response?.transports || []
-  };
-  const publicKey = Buffer.from(credential.publicKey).toString("base64url");
-  const enrollmentRef = db.doc(`passkeyEnrollmentRequests/${employee.id}`);
-  const credentialRef = db.doc(`passkeyCredentials/${credential.id || response.id}`);
-  const batch = db.batch();
-  batch.set(credentialRef, {
-    userId: employee.id,
-    userName: employee.name || employee.email || "",
-    department: employee.department || "",
-    publicKey,
-    counter: Number(credential.counter || 0),
-    transports: credential.transports || response.response?.transports || [],
-    deviceType: info.credentialDeviceType || "unknown",
-    backedUp: Boolean(info.credentialBackedUp),
-    status: "active",
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp()
-  });
-  batch.set(enrollmentRef, { status: "registered", registeredAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  batch.delete(challengeRef(employee.id, "registration"));
-  await batch.commit();
-  await audit("passkey.registered", employee, { targetUserId: employee.id, department: employee.department, credentialId: credential.id || response.id });
-  return { verified: true };
-});
-
-exports.beginPunch = callable(async function beginPunch(request) {
-  const employee = await profileFor(request.auth.uid);
-  if (employee.attendanceRequired === false) {
-    throw new HttpsError("failed-precondition", "此帳號已設定為免打卡人員。");
-  }
-  const type = request.data?.type;
-  if (!['checkIn', 'checkOut'].includes(type)) throw new HttpsError("invalid-argument", "打卡類型錯誤。");
-  const credentialSnap = await db.collection("passkeyCredentials").where("userId", "==", employee.id).get();
-  const credentials = credentialSnap.docs.filter((docSnap) => docSnap.data().status === "active");
-  if (!credentials.length) throw new HttpsError("failed-precondition", "尚未完成經主管核准的 Passkey 註冊。");
-  const options = await generateAuthenticationOptions({
-    rpID: RP_ID,
-    userVerification: "required",
-    allowCredentials: credentials.map((docSnap) => ({ id: docSnap.id, transports: docSnap.data().transports || [] }))
-  });
-  await saveChallenge(employee.id, "punch", options.challenge, { punchType: type });
-  return options;
-});
 
 async function activeFieldAssignments(userId, now) {
   const snap = await db.collection("fieldAssignments").where("userId", "==", userId).get();
@@ -414,34 +270,15 @@ async function rebuildAttendanceDaily(employee, date, settings) {
   }, { merge: true });
 }
 
-exports.finishPunch = callable(async function finishPunch(request) {
+exports.punch = callable(async function punch(request) {
   const employee = await profileFor(request.auth.uid);
   if (employee.attendanceRequired === false) {
     throw new HttpsError("failed-precondition", "此帳號已設定為免打卡人員。");
   }
-  const challenge = await loadChallenge(employee.id, "punch");
-  const response = request.data?.response;
-  if (!response?.id) throw new HttpsError("invalid-argument", "缺少 Passkey 驗證結果。");
-  const credentialRef = db.doc(`passkeyCredentials/${response.id}`);
-  const credentialSnap = await credentialRef.get();
-  if (!credentialSnap.exists || credentialSnap.data().userId !== employee.id || credentialSnap.data().status !== "active") {
-    throw new HttpsError("permission-denied", "Passkey 不屬於目前使用者或已失效。");
+  const type = request.data?.type;
+  if (!["checkIn", "checkOut"].includes(type)) {
+    throw new HttpsError("invalid-argument", "打卡類型錯誤。");
   }
-  const credentialData = credentialSnap.data();
-  const verification = await verifyAuthenticationResponse({
-    response,
-    expectedChallenge: challenge.challenge,
-    expectedOrigin: EXPECTED_ORIGINS,
-    expectedRPID: RP_ID,
-    requireUserVerification: true,
-    credential: {
-      id: credentialSnap.id,
-      publicKey: Buffer.from(credentialData.publicKey, "base64url"),
-      counter: Number(credentialData.counter || 0),
-      transports: credentialData.transports || []
-    }
-  });
-  if (!verification.verified) throw new HttpsError("permission-denied", "生物辨識驗證失敗。");
 
   const now = new Date();
   const date = todayKeyTaipei(now);
@@ -450,25 +287,25 @@ exports.finishPunch = callable(async function finishPunch(request) {
   const shift = normalizedShift(employee, settings);
   assertPunchWindow(now, date, shift, settings);
   const rows = await recordsForDate(employee.id, date);
-  validatePunchSequence(challenge.punchType, rows);
+  validatePunchSequence(type, rows);
   const locationDecision = await currentLocationDecision(employee, now, request.data?.location);
   if (!locationDecision.allowed) {
     throw new HttpsError("permission-denied", locationDecision.reason === "gps_accuracy_too_low"
       ? "定位精度不足，請移至可接收 GPS 的位置後重試。" : "目前位置不在公司據點或核准外勤範圍內。");
   }
   const approvedLeaves = await approvedLeavesForDate(employee.id, date);
-  const hasEarlierCheckIn = challenge.punchType === "checkIn"
+  const hasEarlierCheckIn = type === "checkIn"
     && rows.some((row) => row.type === "checkIn" && timestampDate(row.timestamp) <= now);
   const status = hasEarlierCheckIn
     ? "normal"
-    : resolveStatusWithLeaves(challenge.punchType, now, date, shift, settings, approvedLeaves);
+    : resolveStatusWithLeaves(type, now, date, shift, settings, approvedLeaves);
   const exceptionRef = db.doc(`attendanceExceptions/${date}_${employee.id}`);
   const exceptionSnap = await exceptionRef.get();
   const recordRef = db.collection("attendance").doc();
   const guardRef = db.doc(`punchGuards/${date}_${employee.id}`);
   await db.runTransaction(async (transaction) => {
     const guard = await transaction.get(guardRef);
-    if (guard.exists && guard.data().lastType === challenge.punchType
+    if (guard.exists && guard.data().lastType === type
       && Date.now() - timestampDate(guard.data().updatedAt).getTime() < 60_000) {
       throw new HttpsError("already-exists", "重複打卡已被阻擋。");
     }
@@ -476,7 +313,7 @@ exports.finishPunch = callable(async function finishPunch(request) {
       userId: employee.id,
       userName: employee.name || employee.email || "",
       department: employee.department || "",
-      type: challenge.punchType,
+      type,
       shiftId: shift.id,
       shiftName: shift.name,
       workStart: shift.workStart,
@@ -493,17 +330,14 @@ exports.finishPunch = callable(async function finishPunch(request) {
       workSiteId: locationDecision.workSiteId || null,
       fieldAssignmentId: locationDecision.fieldAssignmentId || null,
       status,
-      source: "passkey_web",
-      credentialId: credentialSnap.id,
+      source: "authenticated_gps_web",
       exceptionId: exceptionSnap.exists ? exceptionSnap.id : null,
       deviceInfo: cleanText(request.data?.deviceInfo, 300),
       createdAt: FieldValue.serverTimestamp()
     });
-    transaction.set(credentialRef, { counter: verification.authenticationInfo.newCounter, lastUsedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    transaction.set(guardRef, { userId: employee.id, date, lastType: challenge.punchType, updatedAt: FieldValue.serverTimestamp() });
-    transaction.delete(challengeRef(employee.id, "punch"));
+    transaction.set(guardRef, { userId: employee.id, date, lastType: type, updatedAt: FieldValue.serverTimestamp() });
     if (exceptionSnap.exists) {
-      transaction.set(exceptionRef, { laterPunchAt: Timestamp.fromDate(now), laterPunchType: challenge.punchType, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      transaction.set(exceptionRef, { laterPunchAt: Timestamp.fromDate(now), laterPunchType: type, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     }
   });
   await rebuildAttendanceDaily(employee, date, settings);
@@ -511,26 +345,10 @@ exports.finishPunch = callable(async function finishPunch(request) {
     targetUserId: employee.id,
     department: employee.department,
     recordId: recordRef.id,
-    type: challenge.punchType,
+    type,
     locationDecision: locationDecision.reason
   });
   return { success: true, recordId: recordRef.id, timestamp: now.toISOString(), status, locationDecision: locationDecision.reason };
-});
-
-exports.resetPasskey = callable(async function resetPasskey(request) {
-  const admin = await profileFor(request.auth.uid);
-  requireAdmin(admin);
-  const userId = cleanText(request.data?.userId, 128);
-  const reason = cleanText(request.data?.reason);
-  if (!reason) throw new HttpsError("invalid-argument", "重設原因必填。");
-  const employee = await profileFor(userId);
-  const snap = await db.collection("passkeyCredentials").where("userId", "==", userId).get();
-  const batch = db.batch();
-  snap.docs.forEach((item) => batch.set(item.ref, { status: "revoked", revokedAt: FieldValue.serverTimestamp(), revokedBy: admin.id, revokeReason: reason }, { merge: true }));
-  batch.set(db.doc(`passkeyEnrollmentRequests/${userId}`), { status: "reset", updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  await batch.commit();
-  await audit("passkey.reset", admin, { targetUserId: userId, department: employee.department, reason });
-  return { revoked: snap.size };
 });
 
 exports.submitExceptionReason = callable(async function submitExceptionReason(request) {

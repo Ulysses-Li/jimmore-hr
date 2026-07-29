@@ -3,7 +3,7 @@
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { CALLABLE_OPTIONS, CHALLENGE_TTL_MS } = require("../config");
+const { CALLABLE_OPTIONS } = require("../config");
 
 function createSecurityRuntime(db) {
   async function enforceRateLimit(uid, action, maxPerMinute) {
@@ -89,44 +89,14 @@ function createSecurityRuntime(db) {
     return new Date(value);
   }
 
-  function challengeRef(uid, purpose) {
-    return db.doc(`securityChallenges/${uid}_${purpose}`);
-  }
-
-  async function saveChallenge(uid, purpose, challenge, extra = {}) {
-    await challengeRef(uid, purpose).set({
-      uid,
-      purpose,
-      challenge,
-      ...extra,
-      createdAt: FieldValue.serverTimestamp(),
-      expiresAt: Timestamp.fromMillis(Date.now() + CHALLENGE_TTL_MS)
-    });
-  }
-
-  async function loadChallenge(uid, purpose) {
-    const snap = await challengeRef(uid, purpose).get();
-    if (!snap.exists) {
-      throw new HttpsError("failed-precondition", "驗證挑戰不存在，請重新開始。");
-    }
-    const data = snap.data();
-    if (timestampDate(data.expiresAt).getTime() < Date.now()) {
-      throw new HttpsError("deadline-exceeded", "驗證已逾時，請重新操作。");
-    }
-    return data;
-  }
-
   return {
     audit,
     callable,
-    challengeRef,
     cleanText,
-    loadChallenge,
     profileFor,
     requireAdmin,
     requireReviewer,
     reviewerCanAccess,
-    saveChallenge,
     timestampDate
   };
 }

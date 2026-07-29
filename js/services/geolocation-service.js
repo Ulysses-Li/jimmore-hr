@@ -6,7 +6,7 @@ const DEFAULT_OPTIONS = Object.freeze({
 
 export async function acquirePunchLocation(options = {}) {
   if (!window.isSecureContext) {
-    throw new Error("定位與 Passkey 只能在 HTTPS 或 localhost 安全環境使用。");
+    throw new Error("定位只能在 HTTPS 或 localhost 安全環境使用。");
   }
   if (!navigator.geolocation) {
     throw new Error("此瀏覽器不支援 GPS 定位。");

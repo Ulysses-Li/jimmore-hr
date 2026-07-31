@@ -24,6 +24,7 @@ import {
 } from "./app.js";
 import { callSecureFunction } from "./app.js";
 import { renderSecurityAdmin } from "./security-admin.js?v=20260724-5";
+import { correctionDisplayTime } from "./attendance-correction.js";
 
 const mode = document.body.dataset.adminMode;
 const titleMap = {
@@ -933,7 +934,7 @@ function attendancePrintHtml(user, summaryRows, attendanceRows, approvedLeaves, 
       <table class="left-table"><tr class="summary-row"><td>出勤總時數統計</td><td>${totalWorkHours} 小時</td></tr></table>
       <table><tr class="summary-row"><td>請假總時數統計</td><td>${totalLeaveHours} 小時</td></tr></table>
     </div>
-    <div class="lunch-note">${escapeHtml(printLunchSummary(settings))}</div>
+    <div class="lunch-note">${escapeHtml(printLunchSummary(settings))}${attendanceCorrectionNote(user, correctDailyHours, settings)}</div>
     <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
   </div>
 </body>
@@ -959,7 +960,7 @@ function companyAttendancePrintHtml(sheets, settings, period, correctDailyHours 
         <table class="left-table"><tr class="summary-row"><td>出勤總時數統計</td><td>${totalWorkHours} 小時</td></tr></table>
         <table><tr class="summary-row"><td>請假總時數統計</td><td>${totalLeaveHours} 小時</td></tr></table>
       </div>
-      <div class="lunch-note">${escapeHtml(printLunchSummary(settings))}</div>
+      <div class="lunch-note">${escapeHtml(printLunchSummary(settings))}${attendanceCorrectionNote(user, correctDailyHours, settings)}</div>
     </section>`;
   }).join("");
 
@@ -1099,7 +1100,12 @@ function buildAttendancePrintRows(user, summaryRows, attendanceRows, approvedLea
       day,
       weekday: weekdayShort(new Date(`${date}T00:00:00`)),
       isRestDay: isCompanyRestDay(date, settings),
-      ...attendancePrintPunches(date, rowsByDate.get(date) || [], settings),
+      ...attendancePrintPunches(date, rowsByDate.get(date) || [], settings, {
+        enabled: correctDailyHours && user.workMode === "field",
+        employeeId: user.id,
+        workStart: summary?.workStart || settings.workStart || "09:00",
+        workEnd: summary?.effectiveWorkEnd || summary?.workEnd || settings.workEnd || "18:00"
+      }),
       workHours: workHours ? workHours.toFixed(2).replace(/\.00$/, "") : "",
       leaveHours: leaveHours ? leaveHours.toFixed(2).replace(/\.00$/, "") : "",
       leaveTypes: Array.from(new Set(dayLeaves.map((item) => leaveTypeLabel(item.leaveType)))).join("、"),
@@ -1129,24 +1135,50 @@ function printClockTime(date) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-function attendancePrintPunches(date, rows, settings) {
+function attendancePrintPunches(date, rows, settings, correction = {}) {
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
-  const ordered = [...rows]
+  let ordered = [...rows]
     .map((row) => ({ ...row, punchTime: timestampToDate(row.timestamp) }))
     .filter((row) => row.punchTime && !Number.isNaN(row.punchTime.getTime()))
     .sort((a, b) => a.punchTime.getTime() - b.punchTime.getTime());
+  if (correction.enabled) {
+    const firstCheckIn = ordered.find((row) => row.type === "checkIn");
+    const lastCheckOut = [...ordered].reverse().find((row) => row.type === "checkOut");
+    const windowMinutes = Number(settings.punchWindowMinutes || 13);
+    ordered = ordered.map((row) => {
+      const isBoundaryPunch = row === firstCheckIn || row === lastCheckOut;
+      if (!isBoundaryPunch) return { ...row, displayTime: row.punchTime };
+      const boundaryTime = timeToDate(
+        date,
+        row.type === "checkIn" ? correction.workStart : correction.workEnd
+      );
+      return {
+        ...row,
+        displayTime: correctionDisplayTime({
+          employeeId: correction.employeeId,
+          date,
+          type: row.type,
+          originalTime: row.punchTime,
+          boundaryTime,
+          windowMinutes
+        })
+      };
+    });
+  } else {
+    ordered = ordered.map((row) => ({ ...row, displayTime: row.punchTime }));
+  }
   const morningRows = ordered.filter((row) => row.punchTime < lunchEnd);
   const afternoonRows = ordered.filter((row) => row.punchTime >= lunchEnd);
   const timesByType = (list, type, index) => {
     const times = list
       .filter((row) => row.type === type)
-      .map((row) => printTime(row.punchTime));
+      .map((row) => printTime(row.displayTime));
     if (index === 0) return times[0] || "";
     return times.slice(index).join("\n");
   };
   const afternoonCheckOuts = afternoonRows
     .filter((row) => row.type === "checkOut")
-    .map((row) => printTime(row.punchTime));
+    .map((row) => printTime(row.displayTime));
   const finalAfternoonOut = afternoonCheckOuts.at(-1) || "";
   const midAfternoonOuts = afternoonCheckOuts.length > 1 ? afternoonCheckOuts.slice(0, -1).join("\n") : "";
   return {
@@ -1173,6 +1205,12 @@ function printLunchSummary(settings) {
   const start = settings.lunchStart || "12:00";
   const end = settings.lunchEnd || "13:00";
   return `休息時間：${start} - ${end}`;
+}
+
+function attendanceCorrectionNote(user, enabled, settings) {
+  if (!enabled || user.workMode !== "field") return "";
+  const minutes = Number(settings.punchWindowMinutes || 13);
+  return `　外勤超出時段之打卡時間，依 ${minutes} 分鐘固定浮動規則呈現；原始紀錄未變更。`;
 }
 
 function weekdayShort(date) {

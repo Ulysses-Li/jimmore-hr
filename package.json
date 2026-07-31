@@ -7,7 +7,8 @@
     "dev": "vite --host 127.0.0.1 --port 5500",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5500",
-    "check": "npm run build && npm --prefix functions run lint && npm --prefix functions test"
+    "test": "node --test test/*.test.js",
+    "check": "npm run build && npm test && npm --prefix functions run lint && npm --prefix functions test"
   },
   "dependencies": {
     "bootstrap": "5.3.3",

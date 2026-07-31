@@ -93,7 +93,7 @@ test("work hours pair punches and deduct lunch overlap", () => {
 });
 
 test("overtime hours deduct configured lunch overlap", () => {
-  const settings = { lunchStart: "12:00", lunchEnd: "13:00" };
+  const settings = { lunchStart: "12:00", lunchEnd: "13:00", standardHours: 8 };
   assert.equal(
     calculateHoursExcludingLunch(
       new Date("2026-07-18T01:00:00Z"),
@@ -109,6 +109,14 @@ test("overtime hours deduct configured lunch overlap", () => {
       settings
     ),
     3
+  );
+  assert.equal(
+    calculateHoursExcludingLunch(
+      new Date("2026-07-18T00:00:00Z"),
+      new Date("2026-07-18T12:00:00Z"),
+      settings
+    ),
+    8
   );
 });
 

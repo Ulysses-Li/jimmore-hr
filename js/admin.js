@@ -1738,14 +1738,17 @@ async function renderRequests(collectionName) {
   content.innerHTML = `
     <div class="panel p-3">
       <div class="table-responsive"><table class="table align-middle mb-0">
-        <thead><tr><th>申請人</th><th>類型</th><th>時間</th><th>時數</th>${isLeave ? "<th>職務代理人</th>" : ""}<th>原因</th><th>狀態</th><th></th></tr></thead>
+        <thead><tr><th>申請人</th><th>類型</th><th>時間</th><th>時數</th>${isLeave ? "<th>職務代理人</th>" : "<th>地點</th>"}<th>原因</th><th>狀態</th><th></th></tr></thead>
         <tbody>${requests.length ? requests.map((row) => {
           const type = isLeave ? leaveTypeLabel(row.leaveType) : (row.convertToCompTime ? "加班轉補休" : "加班費");
-          const calculatedHours = isLeave ? Number(row.hours) : calculateHoursExcludingLunch(
-            timestampToDate(row.startTime),
-            timestampToDate(row.endTime),
-            workSettings.lunchStart || "12:00",
-            workSettings.lunchEnd || "13:00"
+          const calculatedHours = isLeave ? Number(row.hours) : Math.min(
+            8,
+            calculateHoursExcludingLunch(
+              timestampToDate(row.startTime),
+              timestampToDate(row.endTime),
+              workSettings.lunchStart || "12:00",
+              workSettings.lunchEnd || "13:00"
+            )
           );
           const hoursMismatch = !isLeave && Math.abs(calculatedHours - Number(row.hours)) > 0.001;
           return `<tr data-id="${row.id}" data-user-id="${row.userId}" data-hours="${calculatedHours}" data-kind="${row.leaveType || ""}" data-comp="${row.convertToCompTime ? "1" : "0"}">
@@ -1753,7 +1756,7 @@ async function renderRequests(collectionName) {
             <td>${type}</td>
             <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
             <td>${calculatedHours}${hoursMismatch ? `<div class="small text-warning">原記錄 ${row.hours}</div>` : ""}</td>
-            ${isLeave ? `<td>${escapeHtml(row.proxyUserName || "-")}</td>` : ""}
+            ${isLeave ? `<td>${escapeHtml(row.proxyUserName || "-")}</td>` : `<td>${escapeHtml(row.location || "-")}</td>`}
             <td>${row.reason || "-"}</td>
             <td>${badge(row.status)}${row.status === "voided" && row.voidReason ? `<div class="small text-danger mt-1">${escapeHtml(row.voidReason)}</div>` : ""}</td>
             <td>${row.status === "pending"
@@ -1764,7 +1767,7 @@ async function renderRequests(collectionName) {
                   ? `<button class="btn btn-sm btn-outline-primary" data-recalculate-overtime="${row.id}">修正為 ${calculatedHours} 小時</button>`
                 : "-"}</td>
           </tr>`;
-        }).join("") : `<tr><td colspan="${isLeave ? 8 : 7}" class="muted">尚無資料</td></tr>`}</tbody>
+        }).join("") : `<tr><td colspan="8" class="muted">尚無資料</td></tr>`}</tbody>
       </table></div>
     </div>
     ${isLeave && adminProfile.role === "admin" ? `

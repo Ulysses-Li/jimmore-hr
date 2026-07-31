@@ -208,7 +208,9 @@ function calculateHoursExcludingLunch(startValue, endValue, settings = {}) {
   }
 
   const grossMinutes = (end.getTime() - start.getTime()) / 60000;
-  return Number((Math.max(0, grossMinutes - lunchMinutes) / 60).toFixed(2));
+  const calculatedHours = Math.max(0, grossMinutes - lunchMinutes) / 60;
+  const maxHours = 8;
+  return Number(Math.min(calculatedHours, maxHours).toFixed(2));
 }
 
 function earliestCheckInsByUserDate(records) {

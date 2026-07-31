@@ -12,6 +12,7 @@ const {
 const { createSecurityRuntime } = require("./lib/security-runtime");
 const { createAdminHandlers } = require("./lib/admin-service");
 const {
+  canPunchOutsideWindow,
   calculateWorkHours,
   decideLocation,
   effectiveWorkEnd,
@@ -285,7 +286,9 @@ exports.punch = callable(async function punch(request) {
   const settingsSnap = await db.doc("workSettings/default").get();
   const settings = settingsSnap.exists ? settingsSnap.data() : {};
   const shift = normalizedShift(employee, settings);
-  assertPunchWindow(now, date, shift, settings);
+  if (!canPunchOutsideWindow(employee)) {
+    assertPunchWindow(now, date, shift, settings);
+  }
   const rows = await recordsForDate(employee.id, date);
   validatePunchSequence(type, rows);
   const locationDecision = await currentLocationDecision(employee, now, request.data?.location);

@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  canPunchOutsideWindow,
   calculateHoursExcludingLunch,
   calculateWorkHours,
   decideLocation,
@@ -13,6 +14,12 @@ const {
   taipeiDateTime,
   todayKeyTaipei
 } = require("../src/core");
+
+test("only field staff can punch outside the normal window", () => {
+  assert.equal(canPunchOutsideWindow({ workMode: "field" }), true);
+  assert.equal(canPunchOutsideWindow({ workMode: "office" }), false);
+  assert.equal(canPunchOutsideWindow({}), false);
+});
 
 test("Taipei date keys do not depend on server timezone", () => {
   assert.equal(todayKeyTaipei(new Date("2026-07-22T16:30:00.000Z")), "2026-07-23");

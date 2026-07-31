@@ -140,6 +140,10 @@ function resolvePunchStatus(type, now, shift, graceMinutes = 0, effectiveEnd = n
   return now.getTime() < end.getTime() ? "earlyLeave" : "normal";
 }
 
+function canPunchOutsideWindow(profile = {}) {
+  return profile.workMode === "field";
+}
+
 function isRestDay(dateKey, settings = {}) {
   const noon = taipeiDateTime(dateKey, "12:00");
   const weekday = taipeiParts(noon).weekday;
@@ -224,6 +228,7 @@ function earliestCheckInsByUserDate(records) {
 
 module.exports = {
   attendanceRanges,
+  canPunchOutsideWindow,
   calculateHoursExcludingLunch,
   calculateWorkHours,
   decideLocation,

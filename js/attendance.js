@@ -129,7 +129,7 @@ async function punch(type) {
   try {
     const at = new Date();
     const shift = getAssignedShift();
-    assertPunchWindowOpen(at, shift);
+    if (!canPunchOutsideWindow()) assertPunchWindowOpen(at, shift);
     const todayRecords = await loadTodayRecords(todayKey(at));
     const lastRecord = todayRecords.at(-1);
     if (type === "checkIn" && lastRecord?.type === "checkIn") {
@@ -370,6 +370,10 @@ function assertPunchWindowOpen(at, shift) {
   throw new Error(`目前非打卡開放時間，開放時間為 ${fmtTime(window.openAt)} - ${fmtTime(window.closeAt)}。`);
 }
 
+function canPunchOutsideWindow() {
+  return profile.workMode === "field";
+}
+
 function punchWindowText(date, shift) {
   const window = attendancePunchWindow(date, shift);
   return `${fmtTime(window.openAt)} - ${fmtTime(window.closeAt)}`;
@@ -416,7 +420,7 @@ function updateActionState(rows) {
 
   const now = new Date();
   const todayWindow = attendancePunchWindow(now, assignedShift);
-  if (now < todayWindow.openAt || now > todayWindow.closeAt) {
+  if (!canPunchOutsideWindow() && (now < todayWindow.openAt || now > todayWindow.closeAt)) {
     hint.className = "alert alert-warning py-2 mb-3";
     hint.textContent = `目前非打卡開放時間。今日開放時間為 ${punchWindowText(now, assignedShift)}。`;
     checkInBtn.disabled = true;
@@ -426,7 +430,9 @@ function updateActionState(rows) {
 
   if (!lastRecord) {
     hint.className = "alert alert-info py-2 mb-3";
-    hint.textContent = `今日尚未簽到。打卡開放時間為 ${punchWindowText(now, assignedShift)}，請先按「上班簽到」。`;
+    hint.textContent = canPunchOutsideWindow()
+      ? "外勤人員不限打卡時段。請先停妥車輛並確認安全，再按「上班簽到」。"
+      : `今日尚未簽到。打卡開放時間為 ${punchWindowText(now, assignedShift)}，請先按「上班簽到」。`;
     checkInBtn.disabled = false;
     checkOutBtn.disabled = true;
     return;

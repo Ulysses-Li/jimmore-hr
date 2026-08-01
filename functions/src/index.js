@@ -39,7 +39,9 @@ const adminHandlers = createAdminHandlers({
   cleanText,
   profileFor,
   requireAdmin,
-  requireReviewer
+  requireReviewer,
+  rebuildAttendanceDaily,
+  rebuildPunchGuard
 });
 
 exports.createEmployeeAccount = callable(adminHandlers.createEmployeeAccount);
@@ -48,6 +50,7 @@ exports.reviewHrRequest = callable(adminHandlers.reviewHrRequest);
 exports.recalculateOvertimeRequest = callable(adminHandlers.recalculateOvertimeRequest);
 exports.voidApprovedLeave = callable(adminHandlers.voidApprovedLeave);
 exports.saveWorkSettings = callable(adminHandlers.saveWorkSettings);
+exports.deleteAttendanceRecord = callable(adminHandlers.deleteAttendanceRecord);
 
 exports.getEmployeeDirectory = callable(async function getEmployeeDirectory(request) {
   const viewer = await profileFor(request.auth.uid);
@@ -269,6 +272,22 @@ async function rebuildAttendanceDaily(employee, date, settings) {
     hasManualCorrection: rows.some((row) => row.manualCorrection),
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
+}
+
+async function rebuildPunchGuard(userId, date) {
+  const rows = await recordsForDate(userId, date);
+  const guardRef = db.doc(`punchGuards/${date}_${userId}`);
+  const last = rows.at(-1);
+  if (!last) {
+    await guardRef.delete();
+    return;
+  }
+  await guardRef.set({
+    userId,
+    date,
+    lastType: last.type,
+    updatedAt: Timestamp.fromDate(last.timestamp)
+  });
 }
 
 exports.punch = callable(async function punch(request) {

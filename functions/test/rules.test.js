@@ -109,12 +109,18 @@ test("Privileged browser writes are denied even for administrators", { skip: !em
         department: "工程",
         status: "pending"
       });
+      await setDoc(doc(firestore, "attendance/record-a"), {
+        userId: "employee-a",
+        department: "工程",
+        type: "checkIn"
+      });
     });
-    const { doc, setDoc, updateDoc } = require("firebase/firestore");
+    const { deleteDoc, doc, setDoc, updateDoc } = require("firebase/firestore");
     const adminDb = testEnv.authenticatedContext("admin-a").firestore();
     await assertFails(updateDoc(doc(adminDb, "users/employee-a"), { role: "admin" }));
     await assertFails(updateDoc(doc(adminDb, "leaveRequests/request-a"), { status: "approved" }));
     await assertFails(setDoc(doc(adminDb, "workSettings/default"), { standardHours: 8 }));
+    await assertFails(deleteDoc(doc(adminDb, "attendance/record-a")));
   } finally {
     await testEnv.cleanup();
   }

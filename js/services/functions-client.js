@@ -37,6 +37,11 @@ export async function callSecureFunction(name, data = {}) {
 
   const code = String(error?.code || "");
   if (code.endsWith("/not-found")) {
+    if (error?.details?.reason === "attendance_record_missing") {
+      throw new Error(String(error?.message || "打卡紀錄已不存在。")
+        .replace(/^FirebaseError:\s*/i, "")
+        .replace(/^functions\/[a-z-]+:\s*/i, ""));
+    }
     throw new Error("安全打卡後端尚未部署，請管理員完成 Firebase Functions 上線。");
   }
   if (code.endsWith("/failed-precondition")) {

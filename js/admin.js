@@ -423,7 +423,7 @@ async function renderAttendanceReport() {
   const usersById = Object.fromEntries(users.map((item) => [item.id, item]));
   const departments = Array.from(new Set(users.map((user) => user.department || "未分部門"))).sort((a, b) => a.localeCompare(b, "zh-Hant"));
   const allAttendanceRows = attendanceSnap.docs
-    .map((item) => item.data())
+    .map((item) => ({ id: item.id, ...item.data() }))
     .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
   const allLeaveRows = leaveSnap.docs
     .map((item) => item.data())
@@ -516,10 +516,33 @@ async function renderAttendanceReport() {
         <span class="badge text-bg-secondary" id="attendanceDetailBadge">尚未選擇員工</span>
       </summary>
       <div class="table-responsive mt-3"><table class="table align-middle mb-0">
-        <thead><tr><th>時間</th><th>員工</th><th>角色</th><th>部門</th><th>班別</th><th>類型</th><th>狀態</th><th>GPS</th></tr></thead>
-        <tbody id="attendanceDetailRows"><tr><td colspan="8" class="muted">請先選擇員工</td></tr></tbody>
+        <thead><tr><th>時間</th><th>員工</th><th>角色</th><th>部門</th><th>班別</th><th>類型</th><th>狀態</th><th>GPS</th>${adminProfile.role === "admin" ? "<th>操作</th>" : ""}</tr></thead>
+        <tbody id="attendanceDetailRows"><tr><td colspan="${adminProfile.role === "admin" ? 9 : 8}" class="muted">請先選擇員工</td></tr></tbody>
       </table></div>
-    </details>`;
+    </details>
+    ${adminProfile.role === "admin" ? `
+      <div class="modal fade" id="deleteAttendanceModal" tabindex="-1" aria-labelledby="deleteAttendanceModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+          <form id="deleteAttendanceForm">
+            <div class="modal-header">
+              <h2 class="modal-title fs-5" id="deleteAttendanceModalLabel">永久刪除打卡紀錄</h2>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+              <div class="alert alert-danger">刪除後無法復原，系統會重新計算當日出勤並留下稽核紀錄。</div>
+              <p class="mb-3" id="deleteAttendanceSummary"></p>
+              <input type="hidden" id="deleteAttendanceRecordId">
+              <label class="form-label" for="deleteAttendanceReason">刪除原因</label>
+              <textarea class="form-control" id="deleteAttendanceReason" rows="3" minlength="4" maxlength="1000" required placeholder="例如：測試打卡、重複紀錄或管理員誤補登"></textarea>
+              <div class="form-text">至少 4 個字元，原因會寫入稽核紀錄。</div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+              <button type="submit" class="btn btn-danger" data-confirm-delete-attendance>確認永久刪除</button>
+            </div>
+          </form>
+        </div></div>
+      </div>` : ""}`;
 
   const renderCurrentSelection = () => {
     const userId = qs("#attendanceUserFilter").value;
@@ -539,6 +562,7 @@ async function renderAttendanceReport() {
   qs("#attendanceCompanyExportCorrection").addEventListener("click", () => {
     openCompanyAttendancePrintView(users, allAttendanceRows, approvedLeaveRows, settings, selectedAttendancePeriod(), true);
   });
+  if (adminProfile.role === "admin") bindAttendanceDeleteForm();
 }
 
 function buildTodayMissingClockInUsers(users, attendanceRows, settings, today) {
@@ -654,7 +678,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
     correctionPrintButton.onclick = null;
     summaryBody.innerHTML = `<tr><td colspan="11" class="muted">請先選擇員工</td></tr>`;
     leaveBody.innerHTML = `<tr><td colspan="5" class="muted">請先選擇員工</td></tr>`;
-    detailBody.innerHTML = `<tr><td colspan="8" class="muted">請先選擇員工</td></tr>`;
+    detailBody.innerHTML = `<tr><td colspan="${adminProfile.role === "admin" ? 9 : 8}" class="muted">請先選擇員工</td></tr>`;
     return;
   }
 
@@ -723,8 +747,55 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
       <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
       <td>${badge(row.status)}</td>
       <td>${mapLink(row.latitude, row.longitude)}</td>
+      ${adminProfile.role === "admin" ? `<td><button class="btn btn-sm btn-outline-danger" type="button" data-delete-attendance="${escapeHtml(row.id)}">刪除</button></td>` : ""}
     </tr>`;
-  }).join("") : `<tr><td colspan="8" class="muted">此員工尚無打卡明細</td></tr>`;
+  }).join("") : `<tr><td colspan="${adminProfile.role === "admin" ? 9 : 8}" class="muted">此員工尚無打卡明細</td></tr>`;
+
+  if (adminProfile.role === "admin") {
+    const rowsById = new Map(attendanceRows.map((row) => [row.id, row]));
+    detailBody.querySelectorAll("[data-delete-attendance]").forEach((button) => {
+      button.addEventListener("click", () => openAttendanceDeleteModal(rowsById.get(button.dataset.deleteAttendance)));
+    });
+  }
+}
+
+function openAttendanceDeleteModal(row) {
+  if (!row || adminProfile.role !== "admin") return;
+  qs("#deleteAttendanceRecordId").value = row.id;
+  qs("#deleteAttendanceReason").value = "";
+  qs("#deleteAttendanceSummary").textContent = [
+    row.userName || row.userId || "未知員工",
+    row.date || dateKeyFromTimestamp(row.timestamp),
+    fmtDateTime(row.timestamp),
+    row.type === "checkIn" ? "簽到" : "簽退"
+  ].join("｜");
+  bootstrap.Modal.getOrCreateInstance(qs("#deleteAttendanceModal")).show();
+  qs("#deleteAttendanceReason").focus();
+}
+
+function bindAttendanceDeleteForm() {
+  const form = qs("#deleteAttendanceForm");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const recordId = qs("#deleteAttendanceRecordId").value;
+    const reason = qs("#deleteAttendanceReason").value.trim();
+    const submitButton = qs("[data-confirm-delete-attendance]", form);
+    if (reason.length < 4) {
+      showToast("刪除原因至少需要 4 個字元。", "warning");
+      qs("#deleteAttendanceReason").focus();
+      return;
+    }
+    submitButton.disabled = true;
+    try {
+      await callSecureFunction("deleteAttendanceRecord", { recordId, reason });
+      bootstrap.Modal.getOrCreateInstance(qs("#deleteAttendanceModal")).hide();
+      showToast("打卡紀錄已永久刪除，當日出勤已重新計算。", "success");
+      await renderAttendanceReport();
+    } catch (error) {
+      showToast(`無法刪除打卡紀錄：${error.message}`, "danger");
+      submitButton.disabled = false;
+    }
+  });
 }
 
 function selectedAttendancePeriod() {

@@ -56,7 +56,16 @@ function publicUserState(user) {
   };
 }
 
-function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, requireReviewer }) {
+function createAdminHandlers({
+  db,
+  audit,
+  cleanText,
+  profileFor,
+  requireAdmin,
+  requireReviewer,
+  rebuildAttendanceDaily,
+  rebuildPunchGuard
+}) {
   async function relatedUserName(userId) {
     if (!userId) return "";
     const snap = await db.doc(`users/${userId}`).get();
@@ -387,6 +396,95 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
     return result;
   }
 
+  async function deleteAttendanceRecord(request) {
+    const admin = await profileFor(request.auth.uid);
+    requireAdmin(admin);
+    const recordId = cleanText(request.data?.recordId, 128);
+    const reason = cleanText(request.data?.reason, 1000);
+    if (!recordId || recordId.includes("/")) throw new HttpsError("invalid-argument", "打卡紀錄編號格式錯誤。");
+    if (reason.length < 4) throw new HttpsError("invalid-argument", "永久刪除原因至少需要 4 個字元。");
+
+    const recordRef = db.doc(`attendance/${recordId}`);
+    const auditRef = db.collection("auditEvents").doc();
+    let deletedRecord;
+    let employee;
+    let reopenedException = false;
+
+    await db.runTransaction(async (transaction) => {
+      const recordSnap = await transaction.get(recordRef);
+      if (!recordSnap.exists) {
+        throw new HttpsError("not-found", "打卡紀錄已不存在。", { reason: "attendance_record_missing" });
+      }
+      const attendance = recordSnap.data();
+      const userId = cleanText(attendance.userId, 128);
+      const date = cleanText(attendance.date, 10);
+      if (!userId || !DATE_PATTERN.test(date)) {
+        throw new HttpsError("failed-precondition", "打卡紀錄缺少員工或日期，無法安全重算。");
+      }
+
+      const employeeSnap = await transaction.get(db.doc(`users/${userId}`));
+      if (!employeeSnap.exists) throw new HttpsError("failed-precondition", "找不到打卡紀錄對應的員工。");
+      employee = { id: employeeSnap.id, ...employeeSnap.data() };
+
+      const exceptionId = cleanText(attendance.exceptionId, 128) || `${date}_${userId}`;
+      const exceptionRef = db.doc(`attendanceExceptions/${exceptionId}`);
+      const exceptionSnap = await transaction.get(exceptionRef);
+
+      transaction.delete(recordRef);
+      if (exceptionSnap.exists && exceptionSnap.data().manualCorrectionRecordId === recordId) {
+        transaction.update(exceptionRef, {
+          manualCorrectionRecordId: FieldValue.delete(),
+          status: "needs_more_info",
+          updatedAt: FieldValue.serverTimestamp(),
+          timeline: FieldValue.arrayUnion({
+            action: "manual_correction_deleted",
+            actorId: admin.id,
+            reason,
+            at: new Date().toISOString()
+          })
+        });
+        reopenedException = true;
+      }
+
+      deletedRecord = {
+        recordId,
+        userId,
+        userName: cleanText(attendance.userName || employee.name || employee.email, 120),
+        department: cleanText(attendance.department || employee.department, 120),
+        date,
+        type: cleanText(attendance.type, 20),
+        timestamp: attendance.timestamp || null,
+        source: cleanText(attendance.source, 80)
+      };
+      transaction.create(auditRef, {
+        action: "attendance.deleted",
+        actorId: admin.id,
+        actorName: admin.name || admin.email || "",
+        department: deletedRecord.department,
+        targetUserId: userId,
+        details: {
+          ...deletedRecord,
+          reason,
+          exceptionReopened: reopenedException
+        },
+        createdAt: FieldValue.serverTimestamp()
+      });
+    });
+
+    const settingsSnap = await db.doc("workSettings/default").get();
+    const settings = settingsSnap.exists ? settingsSnap.data() : {};
+    await Promise.all([
+      rebuildAttendanceDaily(employee, deletedRecord.date, settings),
+      rebuildPunchGuard(employee.id, deletedRecord.date)
+    ]);
+    return {
+      success: true,
+      recordId,
+      dailyRecordId: `${deletedRecord.date}_${employee.id}`,
+      exceptionReopened: reopenedException
+    };
+  }
+
   async function saveWorkSettings(request) {
     const admin = await profileFor(request.auth.uid);
     requireAdmin(admin);
@@ -457,7 +555,8 @@ function createAdminHandlers({ db, audit, cleanText, profileFor, requireAdmin, r
     reviewHrRequest,
     recalculateOvertimeRequest,
     voidApprovedLeave,
-    saveWorkSettings
+    saveWorkSettings,
+    deleteAttendanceRecord
   };
 }
 

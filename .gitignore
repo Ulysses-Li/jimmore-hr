@@ -12,3 +12,4 @@ ui-debug.log
 docs/screenshots/
 docs/*.docx
 docs/APP_CHECK_HOSTING_FIX_NOTES.md
+.prelaunch-backups/

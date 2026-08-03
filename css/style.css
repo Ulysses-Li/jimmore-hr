@@ -126,8 +126,15 @@
 }
 
 .request-actions {
-  min-width: 108px;
+  min-width: 150px;
   text-align: right;
+}
+
+.request-action-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .request-pending-hint {
@@ -217,6 +224,11 @@
   .request-actions .btn-group,
   .request-actions .btn {
     width: 100%;
+  }
+
+  .request-action-group {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

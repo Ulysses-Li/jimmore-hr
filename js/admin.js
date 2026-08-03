@@ -2100,6 +2100,16 @@ async function renderRequests(collectionName) {
             )
           );
           const hoursMismatch = !isLeave && Math.abs(calculatedHours - Number(row.hours)) > 0.001;
+          const primaryAction = row.status === "pending"
+            ? `<div class="btn-group btn-group-sm"><button class="btn btn-success" data-approve>核准</button><button class="btn btn-outline-danger" data-reject>駁回</button></div>`
+            : isLeave && row.status === "approved" && adminProfile.role === "admin"
+              ? `<button class="btn btn-sm btn-outline-danger" data-void-leave="${escapeHtml(row.id)}">無效</button>`
+              : hoursMismatch && row.status === "approved"
+                ? `<button class="btn btn-sm btn-outline-primary" data-recalculate-overtime="${escapeHtml(row.id)}">修正為 ${calculatedHours} 小時</button>`
+                : "";
+          const printAction = isLeave
+            ? `<a class="btn btn-sm btn-outline-secondary" href="leave-print.html?id=${encodeURIComponent(row.id)}" target="_blank" rel="noopener">列印</a>`
+            : "";
           const searchText = [row.userName, row.department, type, row.proxyUserName, row.location, row.reason]
             .filter(Boolean).join(" ").toLocaleLowerCase("zh-TW");
           return `<tr class="request-row ${row.status === "pending" ? "request-row-pending" : ""}" data-request-row data-request-status="${escapeHtml(row.status || "")}" data-request-month="${dateKeyFromTimestamp(row.startTime).slice(0, 7)}" data-request-search="${escapeHtml(searchText)}" data-request-start="${toMillis(row.startTime)}" data-request-created="${toMillis(row.createdAt)}" data-id="${escapeHtml(row.id)}" data-user-id="${escapeHtml(row.userId || "")}" data-hours="${calculatedHours}" data-kind="${escapeHtml(row.leaveType || "")}" data-comp="${row.convertToCompTime ? "1" : "0"}">
@@ -2110,13 +2120,7 @@ async function renderRequests(collectionName) {
             ${isLeave ? `<td data-label="職務代理人">${escapeHtml(row.proxyUserName || "-")}</td>` : `<td data-label="地點">${escapeHtml(row.location || "-")}</td>`}
             <td data-label="原因" class="request-reason">${escapeHtml(row.reason || "-")}</td>
             <td data-label="狀態">${badge(row.status)}${row.status === "voided" && row.voidReason ? `<div class="small text-danger mt-1">${escapeHtml(row.voidReason)}</div>` : ""}</td>
-            <td data-label="操作" class="request-actions">${row.status === "pending"
-              ? `<div class="btn-group btn-group-sm"><button class="btn btn-success" data-approve>核准</button><button class="btn btn-outline-danger" data-reject>駁回</button></div>`
-              : isLeave && row.status === "approved" && adminProfile.role === "admin"
-                ? `<button class="btn btn-sm btn-outline-danger" data-void-leave="${escapeHtml(row.id)}">無效</button>`
-                : hoursMismatch && row.status === "approved"
-                  ? `<button class="btn btn-sm btn-outline-primary" data-recalculate-overtime="${row.id}">修正為 ${calculatedHours} 小時</button>`
-                : "-"}</td>
+            <td data-label="操作" class="request-actions"><div class="request-action-group">${primaryAction}${printAction || (!primaryAction ? "-" : "")}</div></td>
           </tr>`;
         }).join("") : `<tr><td colspan="8" class="muted">尚無資料</td></tr>`}</tbody>
       </table></div>

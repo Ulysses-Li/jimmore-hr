@@ -124,7 +124,7 @@ async function renderHome() {
       <div class="col-md-3"><div class="panel p-3"><div class="muted">加班待審</div><div class="stat-value">${visibleOvertimePending.length}</div></div></div>
       <div class="col-md-3"><div class="panel p-3"><div class="muted">出勤彙總</div><div class="stat-value">${attendance.size}</div></div></div>
     </div>
-    <div class="panel p-3">
+    <div class="panel p-3 mb-4">
       <h2 class="h5 mb-3">快速操作</h2>
       <div class="d-flex gap-2 flex-wrap">
         <a class="btn btn-primary" href="leave.html">請假審核</a>
@@ -132,7 +132,234 @@ async function renderHome() {
         <a class="btn btn-outline-secondary" href="attendance.html">出勤報表</a>
         ${adminProfile.role === "admin" ? `<a class="btn btn-outline-secondary" href="settings.html">系統設定</a>` : ""}
       </div>
+    </div>
+    <div class="panel p-3" id="adminLateStatistics">
+      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+        <div>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <h2 class="h5 mb-0">遲到統計</h2>
+            <span class="badge text-bg-warning">最多顯示 30 人</span>
+          </div>
+          <div class="muted small mt-1" id="lateStatisticsScope">${adminProfile.role === "admin" ? "全公司員工" : "管理範圍內員工"}</div>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <button class="btn btn-outline-secondary btn-sm" id="latePrevMonthBtn" type="button">上個月</button>
+          <button class="btn btn-outline-primary btn-sm" id="lateCurrentMonthBtn" type="button">這個月</button>
+          <button class="btn btn-outline-secondary btn-sm" id="lateNextMonthBtn" type="button">下個月</button>
+        </div>
+      </div>
+      <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+        <h3 class="h6 mb-0" id="lateStatisticsMonthTitle"></h3>
+        <span class="muted small" id="lateStatisticsCount"></span>
+      </div>
+      <div class="row g-3">
+        <div class="col-xl-6">
+          <h3 class="h6 mb-2">今日</h3>
+          <div id="adminTodayLateRanking"><div class="muted border rounded p-3">載入中…</div></div>
+        </div>
+        <div class="col-xl-6">
+          <h3 class="h6 mb-2">所選月份</h3>
+          <div id="adminMonthLateRanking"><div class="muted border rounded p-3">載入中…</div></div>
+        </div>
+      </div>
     </div>`;
+
+  await setupAdminLateStatistics(userRows);
+}
+
+async function setupAdminLateStatistics(userRows) {
+  let visibleMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const visibleUserIds = new Set(userRows.map((user) => user.id));
+  let calendarData = { leaves: [], lateRecords: [], attendanceSettings: {} };
+
+  try {
+    calendarData = await callSecureFunction("getTeamCalendar");
+  } catch (error) {
+    console.error("遲到統計載入失敗", error);
+    const message = escapeHtml(error?.message || "無法取得遲到統計，請稍後再試。");
+    qs("#adminTodayLateRanking").innerHTML = `<div class="alert alert-danger mb-0">${message}</div>`;
+    qs("#adminMonthLateRanking").innerHTML = `<div class="alert alert-danger mb-0">${message}</div>`;
+    return;
+  }
+
+  const allLeaves = Array.isArray(calendarData?.leaves)
+    ? calendarData.leaves.filter((item) => visibleUserIds.has(item.userId))
+    : [];
+  const allLateRecords = Array.isArray(calendarData?.lateRecords)
+    ? calendarData.lateRecords.filter((item) => visibleUserIds.has(item.userId))
+    : [];
+  const settings = calendarData?.attendanceSettings || {
+    lateGraceMinutes: 0,
+    lunchStart: "12:00",
+    lunchEnd: "13:00"
+  };
+
+  const render = () => renderAdminLateStatisticsMonth(
+    visibleMonth,
+    allLeaves,
+    allLateRecords,
+    settings
+  );
+  qs("#latePrevMonthBtn").addEventListener("click", () => {
+    visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1);
+    render();
+  });
+  qs("#lateCurrentMonthBtn").addEventListener("click", () => {
+    visibleMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    render();
+  });
+  qs("#lateNextMonthBtn").addEventListener("click", () => {
+    visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1);
+    render();
+  });
+  render();
+}
+
+function renderAdminLateStatisticsMonth(visibleMonth, allLeaves, allLateRecords, settings) {
+  const year = visibleMonth.getFullYear();
+  const month = visibleMonth.getMonth();
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month + 1, 0, 23, 59, 59);
+  const leaveEvents = allLeaves.filter((item) => {
+    const start = timestampToDate(item.startTime);
+    const end = timestampToDate(item.endTime);
+    return start <= monthEnd && end >= monthStart;
+  });
+  const lateRecords = allLateRecords
+    .filter((item) => {
+      const date = timestampToDate(item.timestamp);
+      return date >= monthStart && date <= monthEnd;
+    })
+    .map((item) => ({ ...item, ...calculateAdminLateEvidence(item, leaveEvents, settings) }))
+    .filter((item) => item.lateMinutes > 0);
+
+  const today = todayKey();
+  const todayInVisibleMonth = today.slice(0, 7) === `${year}-${String(month + 1).padStart(2, "0")}`;
+  const todayRows = todayInVisibleMonth
+    ? lateRecords
+      .filter((item) => item.date === today)
+      .sort((a, b) => b.lateMinutes - a.lateMinutes)
+      .slice(0, 30)
+    : [];
+  const monthly = new Map();
+  lateRecords.forEach((item) => {
+    const key = item.userId || item.userName || "unknown";
+    const current = monthly.get(key) || {
+      userName: item.userName || "未命名",
+      department: item.department || "-",
+      lateCount: 0,
+      lateMinutes: 0,
+      records: []
+    };
+    current.lateCount += 1;
+    current.lateMinutes += item.lateMinutes;
+    current.records.push(item);
+    monthly.set(key, current);
+  });
+  const monthRows = Array.from(monthly.values())
+    .sort((a, b) => b.lateCount - a.lateCount || b.lateMinutes - a.lateMinutes)
+    .slice(0, 30);
+
+  qs("#lateStatisticsMonthTitle").textContent = `${year} 年 ${month + 1} 月`;
+  qs("#lateStatisticsCount").textContent = `本月 ${monthly.size} 位遲到人員，顯示 ${monthRows.length} 位`;
+  qs("#adminTodayLateRanking").innerHTML = todayInVisibleMonth
+    ? adminLateRankingTable(todayRows, "today", year, month)
+    : `<div class="muted border rounded p-3">目前顯示的月份不是本月，今日統計不適用。</div>`;
+  qs("#adminMonthLateRanking").innerHTML = adminLateRankingTable(monthRows, "month", year, month);
+}
+
+function adminLateRankingTable(rows, type, year, month) {
+  if (!rows.length) return `<div class="muted border rounded p-3">目前沒有遲到紀錄。</div>`;
+  const headers = type === "today"
+    ? `<th>#</th><th>員工</th><th>部門</th><th>遲到</th><th></th>`
+    : `<th>#</th><th>員工</th><th>部門</th><th>次數</th><th>總分鐘</th><th></th>`;
+  const body = rows.map((row, index) => {
+    const records = type === "today" ? [row] : row.records;
+    const detailId = `adminLateEvidence_${year}_${month + 1}_${type}_${index}`;
+    const summary = type === "today"
+      ? `<tr><td>${index + 1}</td><td>${escapeHtml(row.userName)}</td><td>${escapeHtml(row.department || "-")}</td><td><span class="badge text-bg-danger">${row.lateMinutes} 分鐘</span></td>`
+      : `<tr><td>${index + 1}</td><td>${escapeHtml(row.userName)}</td><td>${escapeHtml(row.department || "-")}</td><td>${row.lateCount}</td><td><span class="badge text-bg-danger">${row.lateMinutes}</span></td>`;
+    return `${summary}<td><button class="btn btn-link btn-sm p-0 text-nowrap" type="button"
+      data-bs-toggle="collapse" data-bs-target="#${detailId}" aria-expanded="false"
+      aria-controls="${detailId}">查看依據</button></td></tr>
+      <tr class="collapse late-evidence-row" id="${detailId}"><td colspan="${type === "today" ? 5 : 6}">
+        ${adminLateEvidenceHtml(records)}
+      </td></tr>`;
+  }).join("");
+  return `<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function calculateAdminLateEvidence(record, leaveEvents, settings) {
+  const actual = timestampToDate(record.timestamp);
+  const date = record.date || todayKey(actual);
+  const expected = timeToDate(date, record.workStart || "09:00");
+  const rawLateMinutes = Math.max(0, Math.ceil((actual.getTime() - expected.getTime()) / 60000));
+  const graceMinutes = Math.max(0, Number(record.lateGraceMinutes ?? settings.lateGraceMinutes ?? 0));
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const coveredLeaveMinutes = leaveEvents
+    .filter((item) => item.userId === record.userId)
+    .reduce((sum, item) => sum + workMinutesInRange(
+      expected,
+      actual,
+      timestampToDate(item.startTime),
+      timestampToDate(item.endTime),
+      lunchStart,
+      lunchEnd
+    ), 0);
+  return {
+    lateMinutes: Math.max(0, rawLateMinutes - graceMinutes - coveredLeaveMinutes),
+    rawLateMinutes,
+    graceMinutes,
+    coveredLeaveMinutes,
+    actualAt: actual
+  };
+}
+
+function adminLateEvidenceHtml(records) {
+  return `<div class="late-evidence-list">${[...records]
+    .sort((a, b) => timestampToDate(b.timestamp) - timestampToDate(a.timestamp))
+    .map((record) => `<article class="late-evidence-card">
+      <div class="late-evidence-head">
+        <strong>${escapeHtml(record.date || "-")}</strong>
+        <span>${escapeHtml(record.shiftName || "班別")} · 上班 ${escapeHtml(record.workStart || "09:00")}</span>
+        <span class="badge text-bg-danger">${record.lateMinutes} 分鐘</span>
+      </div>
+      <div class="late-evidence-grid">
+        <div><span>實際簽到</span><strong>${formatAdminLateTime(record.actualAt)}</strong></div>
+        <div><span>原始差額</span><strong>${record.rawLateMinutes} 分鐘</strong></div>
+        <div><span>寬限扣除</span><strong>${record.graceMinutes} 分鐘</strong></div>
+        <div><span>請假扣除</span><strong>${record.coveredLeaveMinutes} 分鐘</strong></div>
+      </div>
+      <div class="late-evidence-formula">${record.rawLateMinutes} − ${record.graceMinutes} − ${record.coveredLeaveMinutes} = <strong>${record.lateMinutes} 分鐘</strong></div>
+      <div class="late-evidence-meta">
+        <span>來源：${adminLateSourceLabel(record.source)}</span>
+        ${record.correctionReason ? `<span>補登原因：${escapeHtml(record.correctionReason)}</span>` : ""}
+        ${record.correctedByName ? `<span>補登人：${escapeHtml(record.correctedByName)}</span>` : ""}
+        <span>紀錄編號：${escapeHtml(record.id || "-")}</span>
+        ${record.graceSource === "current_settings" ? `<span>註：舊紀錄使用目前系統寬限設定</span>` : ""}
+      </div>
+    </article>`).join("")}</div>`;
+}
+
+function adminLateSourceLabel(source) {
+  return ({
+    authenticated_gps_web: "帳號驗證＋GPS 打卡",
+    passkey_web: "舊版 Passkey 打卡",
+    admin_manual_correction: "管理員補登",
+    manager_approved_exception: "主管核准補登"
+  })[source] || escapeHtml(source || "系統打卡紀錄");
+}
+
+function formatAdminLateTime(value) {
+  const date = timestampToDate(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("zh-TW", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(date);
 }
 
 async function renderEmployees() {
@@ -1805,10 +2032,43 @@ async function renderRequests(collectionName) {
   const requests = snap.docs
     .map((item) => ({ id: item.id, ...item.data() }))
     .filter((item) => requestVisibleToReviewer(item, usersById))
-    .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+    .sort((a, b) => requestStatusRank(a.status) - requestStatusRank(b.status)
+      || toMillis(b.createdAt) - toMillis(a.createdAt));
+  const statusCounts = requests.reduce((counts, request) => {
+    counts[request.status] = (counts[request.status] || 0) + 1;
+    return counts;
+  }, {});
   content.innerHTML = `
-    <div class="panel p-3">
-      <div class="table-responsive"><table class="table align-middle mb-0">
+    <div class="request-summary-grid mb-3" aria-label="申請案件摘要">
+      ${requestSummaryCard("待審核", statusCounts.pending || 0, "pending")}
+      ${requestSummaryCard("已核准", statusCounts.approved || 0, "approved")}
+      ${requestSummaryCard("已駁回", statusCounts.rejected || 0, "rejected")}
+      ${isLeave ? requestSummaryCard("已無效", statusCounts.voided || 0, "voided") : requestSummaryCard("全部案件", requests.length, "all")}
+    </div>
+    <div class="panel p-3 request-review-panel">
+      <div class="request-toolbar mb-3">
+        <div>
+          <h2 class="h5 mb-1">${isLeave ? "請假申請紀錄" : "加班申請紀錄"}</h2>
+          <div class="muted small">待審案件優先排列，方便快速處理</div>
+        </div>
+        <div class="request-filter-controls">
+          <label class="visually-hidden" for="requestStatusFilter">狀態篩選</label>
+          <select class="form-select form-select-sm" id="requestStatusFilter">
+            <option value="all">全部狀態</option>
+            <option value="pending">待審核</option>
+            <option value="approved">已核准</option>
+            <option value="rejected">已駁回</option>
+            ${isLeave ? '<option value="voided">已無效</option>' : ""}
+          </select>
+          <label class="visually-hidden" for="requestSearchInput">搜尋申請</label>
+          <input class="form-control form-control-sm" id="requestSearchInput" type="search" placeholder="搜尋姓名、部門或原因">
+        </div>
+      </div>
+      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <span class="muted small" id="requestResultCount">共 ${requests.length} 筆</span>
+        <span class="request-pending-hint small">待審案件以黃色標示</span>
+      </div>
+      <div class="table-responsive request-table-wrap"><table class="table align-middle mb-0 request-table">
         <thead><tr><th>申請人</th><th>類型</th><th>時間</th><th>時數</th>${isLeave ? "<th>職務代理人</th>" : "<th>地點</th>"}<th>原因</th><th>狀態</th><th></th></tr></thead>
         <tbody>${requests.length ? requests.map((row) => {
           const type = isLeave ? leaveTypeLabel(row.leaveType) : (row.convertToCompTime ? "加班轉補休" : "加班費");
@@ -1822,24 +2082,27 @@ async function renderRequests(collectionName) {
             )
           );
           const hoursMismatch = !isLeave && Math.abs(calculatedHours - Number(row.hours)) > 0.001;
-          return `<tr data-id="${row.id}" data-user-id="${row.userId}" data-hours="${calculatedHours}" data-kind="${row.leaveType || ""}" data-comp="${row.convertToCompTime ? "1" : "0"}">
-            <td>${row.userName}<br><span class="muted small">${row.department || ""}</span></td>
-            <td>${type}</td>
-            <td>${fmtDateTime(row.startTime)}<br><span class="muted">${fmtDateTime(row.endTime)}</span></td>
-            <td>${calculatedHours}${hoursMismatch ? `<div class="small text-warning">原記錄 ${row.hours}</div>` : ""}</td>
-            ${isLeave ? `<td>${escapeHtml(row.proxyUserName || "-")}</td>` : `<td>${escapeHtml(row.location || "-")}</td>`}
-            <td>${row.reason || "-"}</td>
-            <td>${badge(row.status)}${row.status === "voided" && row.voidReason ? `<div class="small text-danger mt-1">${escapeHtml(row.voidReason)}</div>` : ""}</td>
-            <td>${row.status === "pending"
+          const searchText = [row.userName, row.department, type, row.proxyUserName, row.location, row.reason]
+            .filter(Boolean).join(" ").toLocaleLowerCase("zh-TW");
+          return `<tr class="request-row ${row.status === "pending" ? "request-row-pending" : ""}" data-request-row data-request-status="${escapeHtml(row.status || "")}" data-request-search="${escapeHtml(searchText)}" data-id="${escapeHtml(row.id)}" data-user-id="${escapeHtml(row.userId || "")}" data-hours="${calculatedHours}" data-kind="${escapeHtml(row.leaveType || "")}" data-comp="${row.convertToCompTime ? "1" : "0"}">
+            <td data-label="申請人"><strong>${escapeHtml(row.userName || "-")}</strong><br><span class="muted small">${escapeHtml(row.department || "未設定部門")}</span></td>
+            <td data-label="類型"><span class="request-type">${escapeHtml(type)}</span></td>
+            <td data-label="時間" class="request-time"><time>${fmtDateTime(row.startTime)}</time><span class="request-time-arrow">至</span><time>${fmtDateTime(row.endTime)}</time></td>
+            <td data-label="時數"><strong>${calculatedHours}</strong><span class="small muted"> 小時</span>${hoursMismatch ? `<div class="small text-warning">原記錄 ${row.hours}</div>` : ""}</td>
+            ${isLeave ? `<td data-label="職務代理人">${escapeHtml(row.proxyUserName || "-")}</td>` : `<td data-label="地點">${escapeHtml(row.location || "-")}</td>`}
+            <td data-label="原因" class="request-reason">${escapeHtml(row.reason || "-")}</td>
+            <td data-label="狀態">${badge(row.status)}${row.status === "voided" && row.voidReason ? `<div class="small text-danger mt-1">${escapeHtml(row.voidReason)}</div>` : ""}</td>
+            <td data-label="操作" class="request-actions">${row.status === "pending"
               ? `<div class="btn-group btn-group-sm"><button class="btn btn-success" data-approve>核准</button><button class="btn btn-outline-danger" data-reject>駁回</button></div>`
               : isLeave && row.status === "approved" && adminProfile.role === "admin"
-                ? `<button class="btn btn-sm btn-outline-danger" data-void-leave="${row.id}">無效</button>`
+                ? `<button class="btn btn-sm btn-outline-danger" data-void-leave="${escapeHtml(row.id)}">無效</button>`
                 : hoursMismatch && row.status === "approved"
                   ? `<button class="btn btn-sm btn-outline-primary" data-recalculate-overtime="${row.id}">修正為 ${calculatedHours} 小時</button>`
                 : "-"}</td>
           </tr>`;
         }).join("") : `<tr><td colspan="8" class="muted">尚無資料</td></tr>`}</tbody>
       </table></div>
+      <div class="request-empty-state border rounded p-4 text-center muted" id="requestFilteredEmpty" hidden>沒有符合篩選條件的申請。</div>
     </div>
     ${isLeave && adminProfile.role === "admin" ? `
       <div class="modal fade" id="voidLeaveModal" tabindex="-1" aria-labelledby="voidLeaveModalLabel" aria-hidden="true">
@@ -1863,6 +2126,8 @@ async function renderRequests(collectionName) {
           </form>
         </div>
       </div>` : ""}`;
+
+  bindRequestFilters();
 
   content.querySelectorAll("[data-approve]").forEach((button) => {
     button.addEventListener("click", () => reviewRequest(collectionName, button.closest("tr"), "approved"));
@@ -1889,6 +2154,55 @@ async function renderRequests(collectionName) {
     });
   });
   if (isLeave && adminProfile.role === "admin") bindVoidLeaveActions(requests);
+}
+
+function requestStatusRank(status) {
+  return { pending: 0, approved: 1, rejected: 2, voided: 3 }[status] ?? 4;
+}
+
+function requestSummaryCard(label, count, status) {
+  return `<button class="panel request-summary-card" type="button" data-request-summary-status="${status}">
+    <span class="request-summary-label">${label}</span>
+    <strong>${count}</strong>
+    <span class="small muted">筆案件</span>
+  </button>`;
+}
+
+function bindRequestFilters() {
+  const statusFilter = qs("#requestStatusFilter");
+  const searchInput = qs("#requestSearchInput");
+  const countLabel = qs("#requestResultCount");
+  const emptyState = qs("#requestFilteredEmpty");
+  const tableWrap = content.querySelector(".request-table-wrap");
+  const rows = Array.from(content.querySelectorAll("[data-request-row]"));
+
+  const applyFilters = () => {
+    const status = statusFilter.value;
+    const keyword = searchInput.value.trim().toLocaleLowerCase("zh-TW");
+    let visibleCount = 0;
+    rows.forEach((row) => {
+      const statusMatches = status === "all" || row.dataset.requestStatus === status;
+      const searchMatches = !keyword || row.dataset.requestSearch.includes(keyword);
+      row.hidden = !(statusMatches && searchMatches);
+      if (!row.hidden) visibleCount += 1;
+    });
+    countLabel.textContent = `顯示 ${visibleCount} 筆，共 ${rows.length} 筆`;
+    emptyState.hidden = visibleCount !== 0;
+    tableWrap.hidden = visibleCount === 0;
+    content.querySelectorAll("[data-request-summary-status]").forEach((card) => {
+      card.classList.toggle("is-active", card.dataset.requestSummaryStatus === status);
+    });
+  };
+
+  statusFilter.addEventListener("change", applyFilters);
+  searchInput.addEventListener("input", applyFilters);
+  content.querySelectorAll("[data-request-summary-status]").forEach((card) => {
+    card.addEventListener("click", () => {
+      statusFilter.value = card.dataset.requestSummaryStatus;
+      applyFilters();
+    });
+  });
+  applyFilters();
 }
 
 function bindVoidLeaveActions(requests) {

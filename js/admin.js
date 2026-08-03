@@ -2038,6 +2038,11 @@ async function renderRequests(collectionName) {
     counts[request.status] = (counts[request.status] || 0) + 1;
     return counts;
   }, {});
+  const requestMonths = Array.from(new Set(requests
+    .map((request) => dateKeyFromTimestamp(request.startTime).slice(0, 7))
+    .filter(Boolean)))
+    .sort()
+    .reverse();
   content.innerHTML = `
     <div class="request-summary-grid mb-3" aria-label="申請案件摘要">
       ${requestSummaryCard("待審核", statusCounts.pending || 0, "pending")}
@@ -2060,8 +2065,21 @@ async function renderRequests(collectionName) {
             <option value="rejected">已駁回</option>
             ${isLeave ? '<option value="voided">已無效</option>' : ""}
           </select>
+          <label class="visually-hidden" for="requestMonthFilter">月份篩選</label>
+          <select class="form-select form-select-sm" id="requestMonthFilter">
+            <option value="all">全部月份</option>
+            ${requestMonths.map((monthKey) => `<option value="${monthKey}">${requestMonthLabel(monthKey)}</option>`).join("")}
+          </select>
           <label class="visually-hidden" for="requestSearchInput">搜尋申請</label>
           <input class="form-control form-control-sm" id="requestSearchInput" type="search" placeholder="搜尋姓名、部門或原因">
+        </div>
+      </div>
+      <div class="request-sortbar mb-3" aria-label="案件排序方式">
+        <span class="small fw-bold">排序</span>
+        <div class="btn-group btn-group-sm request-sort-buttons" role="group" aria-label="選擇案件排序方式">
+          <button class="btn btn-primary" type="button" data-request-sort="priority" aria-pressed="true">待審優先</button>
+          <button class="btn btn-outline-primary" type="button" data-request-sort="startAsc" aria-pressed="false">假期近到遠</button>
+          <button class="btn btn-outline-primary" type="button" data-request-sort="startDesc" aria-pressed="false">假期遠到近</button>
         </div>
       </div>
       <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
@@ -2084,7 +2102,7 @@ async function renderRequests(collectionName) {
           const hoursMismatch = !isLeave && Math.abs(calculatedHours - Number(row.hours)) > 0.001;
           const searchText = [row.userName, row.department, type, row.proxyUserName, row.location, row.reason]
             .filter(Boolean).join(" ").toLocaleLowerCase("zh-TW");
-          return `<tr class="request-row ${row.status === "pending" ? "request-row-pending" : ""}" data-request-row data-request-status="${escapeHtml(row.status || "")}" data-request-search="${escapeHtml(searchText)}" data-id="${escapeHtml(row.id)}" data-user-id="${escapeHtml(row.userId || "")}" data-hours="${calculatedHours}" data-kind="${escapeHtml(row.leaveType || "")}" data-comp="${row.convertToCompTime ? "1" : "0"}">
+          return `<tr class="request-row ${row.status === "pending" ? "request-row-pending" : ""}" data-request-row data-request-status="${escapeHtml(row.status || "")}" data-request-month="${dateKeyFromTimestamp(row.startTime).slice(0, 7)}" data-request-search="${escapeHtml(searchText)}" data-request-start="${toMillis(row.startTime)}" data-request-created="${toMillis(row.createdAt)}" data-id="${escapeHtml(row.id)}" data-user-id="${escapeHtml(row.userId || "")}" data-hours="${calculatedHours}" data-kind="${escapeHtml(row.leaveType || "")}" data-comp="${row.convertToCompTime ? "1" : "0"}">
             <td data-label="申請人"><strong>${escapeHtml(row.userName || "-")}</strong><br><span class="muted small">${escapeHtml(row.department || "未設定部門")}</span></td>
             <td data-label="類型"><span class="request-type">${escapeHtml(type)}</span></td>
             <td data-label="時間" class="request-time"><time>${fmtDateTime(row.startTime)}</time><span class="request-time-arrow">至</span><time>${fmtDateTime(row.endTime)}</time></td>
@@ -2160,6 +2178,11 @@ function requestStatusRank(status) {
   return { pending: 0, approved: 1, rejected: 2, voided: 3 }[status] ?? 4;
 }
 
+function requestMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-");
+  return `${year} 年 ${Number(month)} 月`;
+}
+
 function requestSummaryCard(label, count, status) {
   return `<button class="panel request-summary-card" type="button" data-request-summary-status="${status}">
     <span class="request-summary-label">${label}</span>
@@ -2170,20 +2193,37 @@ function requestSummaryCard(label, count, status) {
 
 function bindRequestFilters() {
   const statusFilter = qs("#requestStatusFilter");
+  const monthFilter = qs("#requestMonthFilter");
   const searchInput = qs("#requestSearchInput");
   const countLabel = qs("#requestResultCount");
   const emptyState = qs("#requestFilteredEmpty");
   const tableWrap = content.querySelector(".request-table-wrap");
+  const tableBody = content.querySelector(".request-table tbody");
   const rows = Array.from(content.querySelectorAll("[data-request-row]"));
+  const sortButtons = Array.from(content.querySelectorAll("[data-request-sort]"));
+  let sortMode = "priority";
+
+  const sortRows = () => {
+    rows.sort((a, b) => {
+      const startDifference = Number(a.dataset.requestStart) - Number(b.dataset.requestStart);
+      if (sortMode === "startAsc") return startDifference || Number(b.dataset.requestCreated) - Number(a.dataset.requestCreated);
+      if (sortMode === "startDesc") return -startDifference || Number(b.dataset.requestCreated) - Number(a.dataset.requestCreated);
+      return requestStatusRank(a.dataset.requestStatus) - requestStatusRank(b.dataset.requestStatus)
+        || Number(b.dataset.requestCreated) - Number(a.dataset.requestCreated);
+    });
+    rows.forEach((row) => tableBody.append(row));
+  };
 
   const applyFilters = () => {
     const status = statusFilter.value;
+    const month = monthFilter.value;
     const keyword = searchInput.value.trim().toLocaleLowerCase("zh-TW");
     let visibleCount = 0;
     rows.forEach((row) => {
       const statusMatches = status === "all" || row.dataset.requestStatus === status;
+      const monthMatches = month === "all" || row.dataset.requestMonth === month;
       const searchMatches = !keyword || row.dataset.requestSearch.includes(keyword);
-      row.hidden = !(statusMatches && searchMatches);
+      row.hidden = !(statusMatches && monthMatches && searchMatches);
       if (!row.hidden) visibleCount += 1;
     });
     countLabel.textContent = `顯示 ${visibleCount} 筆，共 ${rows.length} 筆`;
@@ -2195,6 +2235,7 @@ function bindRequestFilters() {
   };
 
   statusFilter.addEventListener("change", applyFilters);
+  monthFilter.addEventListener("change", applyFilters);
   searchInput.addEventListener("input", applyFilters);
   content.querySelectorAll("[data-request-summary-status]").forEach((card) => {
     card.addEventListener("click", () => {
@@ -2202,6 +2243,19 @@ function bindRequestFilters() {
       applyFilters();
     });
   });
+  content.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-request-sort]");
+    if (!button) return;
+    sortMode = button.dataset.requestSort;
+    sortButtons.forEach((item) => {
+      const isActive = item === button;
+      item.classList.toggle("btn-primary", isActive);
+      item.classList.toggle("btn-outline-primary", !isActive);
+      item.setAttribute("aria-pressed", String(isActive));
+    });
+    sortRows();
+  });
+  sortRows();
   applyFilters();
 }
 

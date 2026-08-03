@@ -7,6 +7,7 @@ import {
   where
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { db, requireAuth, bindLogout, mountPageShell, qs, badge, fmtDateTime, hoursBetween, showToast, leaveTypes, leaveTypeLabel, getWorkSettings, timeToDate, todayKey, callSecureFunction } from "./app.js";
+import { leavePrintDocumentHtml } from "./leave-print-template.js";
 
 mountPageShell("請假申請", "建立請假單並追蹤審核狀態");
 const profile = await requireAuth();
@@ -155,117 +156,13 @@ function openLeavePrintView(row) {
     return;
   }
   popup.document.open();
-  popup.document.write(leavePrintHtml(row));
+  popup.document.write(leavePrintDocumentHtml(row, {
+    standardHours: settings.standardHours || 8,
+    fallbackName: profile.name || "",
+    fallbackDepartment: profile.department || ""
+  }));
   popup.document.close();
   popup.focus();
-}
-
-function leavePrintHtml(row) {
-  const start = toDate(row.startTime);
-  const end = toDate(row.endTime);
-  const hours = Number(row.hours || 0);
-  const fullDays = Math.floor(hours / Number(settings.standardHours || 8));
-  const remainingHours = Number((hours % Number(settings.standardHours || 8)).toFixed(2));
-  return `<!doctype html>
-<html lang="zh-Hant">
-<head>
-  <meta charset="utf-8">
-  <title>請假單 - ${escapeHtml(row.userName || profile.name || "")}</title>
-  <style>
-    @page { size: A4 portrait; margin: 9mm 12mm; }
-    * { box-sizing: border-box; }
-    html, body { width: 210mm; min-height: 297mm; }
-    body { font-family: "DFKai-SB", "標楷體", "Microsoft JhengHei", serif; color: #000; margin: 0; background: #fff; }
-    .sheet { width: 186mm; margin: 0 auto; page-break-inside: avoid; }
-    .form-copy { min-height: 131mm; padding-top: 3mm; }
-    .company { text-align: center; font-size: 17pt; letter-spacing: .72em; padding-left: .72em; margin-bottom: 2.5mm; }
-    .title { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: end; font-size: 15pt; margin-bottom: 5mm; border-bottom: 2px solid #000; padding-bottom: 1.2mm; }
-    .title span { text-align: center; border-bottom: 1px solid #000; padding-bottom: 1mm; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11.5pt; line-height: 1.35; border: 2px solid #000; }
-    td { border: 1px solid #000; height: 11.5mm; padding: 1.7mm 2.2mm; vertical-align: middle; overflow-wrap: anywhere; }
-    .label { text-align: center; font-weight: 700; white-space: nowrap; }
-    .center { text-align: center; }
-    .date-cell { letter-spacing: .18em; }
-    .period-label { text-align: center; font-weight: 700; font-size: 11pt; line-height: 1.35; }
-    .period-cell { font-size: 10.5pt; padding: 1.7mm 2.2mm; white-space: nowrap; }
-    .period-line { display: flex; align-items: center; justify-content: space-between; gap: 0.6mm; width: 100%; }
-    .period-prefix { font-weight: 700; }
-    .hours-cell { font-size: 12pt; letter-spacing: .12em; }
-    .sign { height: 20mm; vertical-align: top; }
-    .note { height: 21mm; vertical-align: top; padding: 3mm 4mm; }
-    .void-banner { margin: 2mm 0 4mm; padding: 3mm; border: 2px solid #c00; color: #c00; text-align: center; font: 700 18pt "Microsoft JhengHei", sans-serif; }
-    .void-banner small { display: block; margin-top: 1mm; font-size: 10pt; font-weight: 500; }
-    .print-actions { margin: 6mm auto 0; text-align: center; }
-    .print-actions button { font: 16px "Microsoft JhengHei", sans-serif; padding: 8px 18px; }
-    @media print {
-      html, body { width: auto; min-height: auto; }
-      .print-actions { display: none; }
-      .sheet { width: 100%; }
-      .form-copy { break-inside: avoid; }
-    }
-  </style>
-</head>
-<body>
-  <div class="sheet">
-    ${row.status === "voided" ? `<div class="void-banner">已無效<small>原因：${escapeHtml(row.voidReason || "未填寫")}</small></div>` : ""}
-    ${leavePrintFormCopy(row, start, end, fullDays, remainingHours)}
-    <div class="print-actions"><button onclick="window.print()">列印 / 另存 PDF</button></div>
-  </div>
-</body>
-</html>`;
-}
-
-function leavePrintFormCopy(row, start, end, fullDays, remainingHours) {
-  return `
-    <div class="form-copy">
-      <div class="company">竣貿國際股份有限公司</div>
-      <div class="title"><span>請</span><span>假</span><span>單</span></div>
-      <table>
-        <colgroup>
-          <col style="width: 12%;">
-          <col style="width: 13%;">
-          <col style="width: 12%;">
-          <col style="width: 13%;">
-          <col style="width: 10%;">
-          <col style="width: 16%;">
-          <col style="width: 12%;">
-          <col style="width: 12%;">
-        </colgroup>
-        <tr>
-          <td class="label">中華民國</td>
-          <td colspan="5" class="center date-cell">${start.getFullYear() - 1911} 年 ${start.getMonth() + 1} 月 ${start.getDate()} 日</td>
-          <td class="label">星期</td>
-          <td class="center">${weekdayLabel(start)}</td>
-        </tr>
-        <tr>
-          <td class="label">單位</td>
-          <td class="center">${escapeHtml(row.department || profile.department || "")}</td>
-          <td class="label">假別</td>
-          <td class="center">${escapeHtml(leaveTypeLabel(row.leaveType))}</td>
-          <td rowspan="2" class="period-label">請假期間</td>
-          <td colspan="3" class="period-cell"><div class="period-line"><span class="period-prefix">自</span><span>民國</span><span>${start.getFullYear() - 1911}</span><span>年</span><span>${start.getMonth() + 1}</span><span>月</span><span>${start.getDate()}</span><span>日</span><span>${pad2(start.getHours())}</span><span>時</span><span>${pad2(start.getMinutes())}</span><span>分</span></div></td>
-        </tr>
-        <tr>
-          <td class="label">姓名</td>
-          <td class="center">${escapeHtml(row.userName || profile.name || "")}</td>
-          <td class="label">事由</td>
-          <td class="center">${escapeHtml(row.reason || "")}</td>
-          <td colspan="3" class="period-cell"><div class="period-line"><span class="period-prefix">至</span><span>民國</span><span>${end.getFullYear() - 1911}</span><span>年</span><span>${end.getMonth() + 1}</span><span>月</span><span>${end.getDate()}</span><span>日</span><span>${pad2(end.getHours())}</span><span>時</span><span>${pad2(end.getMinutes())}</span><span>分</span></div></td>
-        </tr>
-        <tr>
-          <td class="label" colspan="2">請假時數</td>
-          <td colspan="6" class="center hours-cell">計 ${fullDays} 天 ${remainingHours} 小時 0 分</td>
-        </tr>
-        <tr>
-          <td class="label" colspan="2">核准簽章</td>
-          <td colspan="6" class="sign"></td>
-        </tr>
-        <tr>
-          <td class="label" colspan="2">備註</td>
-          <td colspan="6" class="note">職務代理人：${escapeHtml(row.proxyUserName || "")}${row.status === "voided" ? `<br>本假單已無效：${escapeHtml(row.voidReason || "未填寫")}` : ""}</td>
-        </tr>
-      </table>
-    </div>`;
 }
 
 async function loadProxyCandidates() {
@@ -278,19 +175,6 @@ function toMillis(value) {
   if (value.toMillis) return value.toMillis();
   if (value.toDate) return value.toDate().getTime();
   return new Date(value).getTime();
-}
-
-function toDate(value) {
-  if (!value) return new Date("");
-  return value.toDate ? value.toDate() : new Date(value);
-}
-
-function weekdayLabel(date) {
-  return ["日", "一", "二", "三", "四", "五", "六"][date.getDay()] || "";
-}
-
-function pad2(value) {
-  return String(value).padStart(2, "0");
 }
 
 function escapeHtml(value) {

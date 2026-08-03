@@ -4,41 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>請假申請單 - Jimmore HR</title>
+  <style id="leavePrintSharedStyles"></style>
   <style>
-    @page { size: A4 portrait; margin: 12mm; }
-    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { margin: 0; background: #eef2f6; color: #111827; font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
     .toolbar { display: flex; justify-content: center; gap: 10px; margin: 16px auto; }
     .toolbar button, .toolbar a { padding: 9px 18px; border: 1px solid #0d6efd; border-radius: 6px; font: 15px inherit; text-decoration: none; cursor: pointer; }
     .toolbar button { background: #0d6efd; color: #fff; }
     .toolbar a { background: #fff; color: #0d6efd; }
-    .sheet { width: 186mm; min-height: 273mm; margin: 12px auto; padding: 12mm; background: #fff; box-shadow: 0 4px 18px rgba(15, 23, 42, .12); }
-    .company { margin: 0; text-align: center; font-size: 12pt; letter-spacing: .08em; }
-    h1 { margin: 3mm 0 1mm; text-align: center; font-size: 22pt; letter-spacing: .22em; }
-    .document-id { margin-bottom: 8mm; color: #4b5563; text-align: right; font-size: 8.5pt; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11pt; }
-    th, td { border: 1px solid #111827; padding: 3.5mm 3mm; vertical-align: middle; }
-    th { width: 24mm; background: #eef2f6; text-align: center; white-space: nowrap; }
-    .reason { height: 30mm; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .void-reason { margin-top: 3mm; padding: 3mm; border: 1px solid #dc3545; color: #991b1b; }
-    .signatures { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 10mm; border: 1px solid #111827; }
-    .signature { min-height: 32mm; padding: 3mm; border-right: 1px solid #111827; }
-    .signature:last-child { border-right: 0; }
-    .signature strong { display: block; margin-bottom: 18mm; text-align: center; }
-    .signature span { display: block; border-top: 1px solid #9ca3af; padding-top: 1.5mm; color: #6b7280; text-align: center; font-size: 8.5pt; }
-    .footer { margin-top: 6mm; color: #6b7280; font-size: 8pt; }
+    .print-host { width: 210mm; min-height: 297mm; margin: 12px auto; padding: 9mm 12mm; background: #fff; box-shadow: 0 4px 18px rgba(15, 23, 42, .12); }
     .error { max-width: 680px; margin: 40px auto; padding: 20px; border: 1px solid #dc3545; border-radius: 8px; background: #fff; color: #991b1b; }
     [hidden] { display: none !important; }
-    @media (max-width: 760px) {
-      .sheet { width: calc(100% - 20px); min-height: 0; margin: 10px; padding: 18px; }
-      .signatures { grid-template-columns: repeat(2, 1fr); }
-      .signature:nth-child(2) { border-right: 0; }
-      .signature:nth-child(-n+2) { border-bottom: 1px solid #111827; }
-    }
+    @media (max-width: 820px) { .print-host { width: calc(100% - 20px); min-height: 0; margin: 10px; padding: 18px; overflow-x: auto; } }
     @media print {
       body { background: #fff; }
       .toolbar, .error { display: none !important; }
-      .sheet { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
+      .print-host { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
     }
   </style>
 </head>
@@ -48,27 +28,7 @@
     <button type="button" id="printLeaveButton">列印／另存 PDF</button>
   </nav>
   <div class="error" id="printError" hidden></div>
-  <main class="sheet" id="leavePrintSheet" hidden>
-    <p class="company">Jimmore HR 人事出勤管理</p>
-    <h1>請假申請單</h1>
-    <div class="document-id">單號：<span id="printRequestId"></span></div>
-    <table aria-label="請假申請內容">
-      <tr><th>申請人</th><td id="printUserName"></td><th>部門</th><td id="printDepartment"></td></tr>
-      <tr><th>假別</th><td id="printLeaveType"></td><th>請假時數</th><td><span id="printHours"></span> 小時</td></tr>
-      <tr><th>開始時間</th><td colspan="3" id="printStartTime"></td></tr>
-      <tr><th>結束時間</th><td colspan="3" id="printEndTime"></td></tr>
-      <tr><th>職務代理人</th><td id="printProxy"></td><th>目前狀態</th><td id="printStatus"></td></tr>
-      <tr><th>申請時間</th><td colspan="3" id="printCreatedAt"></td></tr>
-      <tr><th>請假原因</th><td colspan="3" class="reason"><span id="printReason"></span><div class="void-reason" id="printVoidReason" hidden></div></td></tr>
-    </table>
-    <section class="signatures" aria-label="簽核欄">
-      <div class="signature"><strong>申請人</strong><span>簽名／日期</span></div>
-      <div class="signature"><strong>職務代理人</strong><span>簽名／日期</span></div>
-      <div class="signature"><strong>部門主管</strong><span>簽名／日期</span></div>
-      <div class="signature"><strong>人事／管理員</strong><span>簽名／日期</span></div>
-    </section>
-    <div class="footer">本單由 Jimmore HR 產生｜列印時間：<span id="printGeneratedAt"></span></div>
-  </main>
-  <script type="module" src="../js/leave-print.js?v=20260803-1"></script>
+  <main class="print-host" id="leavePrintHost" hidden></main>
+  <script type="module" src="../js/leave-print.js?v=20260803-2"></script>
 </body>
 </html>

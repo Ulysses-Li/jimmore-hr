@@ -32,6 +32,7 @@ export const leavePrintStyles = `
 export function leavePrintFormHtml(row, options = {}) {
   const start = toDate(row.startTime);
   const end = toDate(row.endTime);
+  const appliedAt = row.createdAt ? toDate(row.createdAt) : start;
   const standardHours = Math.max(1, Number(options.standardHours || 8));
   const totalHours = Number(row.hours || 0);
   const fullDays = Math.floor(totalHours / standardHours);
@@ -53,9 +54,9 @@ export function leavePrintFormHtml(row, options = {}) {
         </colgroup>
         <tr>
           <td class="label">中華民國</td>
-          <td colspan="5" class="center date-cell">${rocDate(start)}</td>
+          <td colspan="5" class="center date-cell">${rocDate(appliedAt)}</td>
           <td class="label">星期</td>
-          <td class="center">${weekdayLabel(start)}</td>
+          <td class="center">${weekdayLabel(appliedAt)}</td>
         </tr>
         <tr>
           <td class="label">單位</td>

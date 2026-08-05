@@ -20,6 +20,7 @@ import {
   todayKey,
   roleLabels,
   leaveTypeLabel,
+  refreshAdminPendingBadges,
   bootstrap
 } from "./app.js";
 import { callSecureFunction } from "./app.js";
@@ -2352,6 +2353,7 @@ async function reviewRequest(collectionName, tr, status) {
     });
     showToast(status === "approved" ? "已核准" : "已駁回", status === "approved" ? "success" : "danger");
     await renderRequests(collectionName);
+    await refreshAdminPendingBadges(adminProfile);
   } catch (error) {
     showToast(`審核失敗：${error.message}`, "danger");
   }

@@ -5,11 +5,15 @@ import {
   signOut
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
+  query,
   setDoc,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  where
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 const jimmoreLogoUrl = new URL("../Jimmore_logo.ico", import.meta.url).href;
 export { app, auth, db, functions, runtimeEnvironment } from "./platform/firebase-client.js";
@@ -172,6 +176,9 @@ export async function requireAuth(options = {}) {
         }
 
         renderShellProfile(profile);
+        void refreshAdminPendingBadges(profile).catch((error) => {
+          console.error("管理選單待處理數量載入失敗", error);
+        });
         resolve(profile);
       } catch (error) {
         renderStartupError(error);
@@ -208,6 +215,39 @@ export function renderShellProfile(profile) {
   qsa("[data-nav]").forEach((link) => {
     if (link.getAttribute("href")?.endsWith(current)) link.classList.add("active");
   });
+}
+
+export async function refreshAdminPendingBadges(profile) {
+  if (!profile || !["manager", "admin"].includes(profile.role)) return;
+
+  const pendingSources = [
+    ["attendance", "attendanceExceptions", "pending_manager_review"],
+    ["leave", "leaveRequests", "pending"],
+    ["overtime", "overtimeRequests", "pending"]
+  ];
+  const snapshots = await Promise.all(pendingSources.map(([, collectionName, status]) => {
+    const constraints = profile.role === "admin"
+      ? [where("status", "==", status)]
+      : [where("managerId", "==", profile.id)];
+    return getDocs(query(collection(db, collectionName), ...constraints));
+  }));
+
+  pendingSources.forEach(([type, , status], index) => {
+    const count = snapshots[index].docs.filter((item) => item.data().status === status).length;
+    updateAdminPendingBadge(type, count);
+  });
+}
+
+function updateAdminPendingBadge(type, count) {
+  const badgeElement = qs(`[data-admin-pending-badge="${type}"]`);
+  if (!badgeElement) return;
+  const normalizedCount = Math.max(0, Number(count || 0));
+  badgeElement.textContent = normalizedCount > 99 ? "99+" : String(normalizedCount);
+  badgeElement.hidden = normalizedCount === 0;
+  badgeElement.setAttribute("aria-label", `${normalizedCount} 筆待處理`);
+  badgeElement.closest("a")?.setAttribute("title", normalizedCount
+    ? `${normalizedCount} 筆待處理`
+    : "目前沒有待處理案件");
 }
 
 export function bindLogout() {
@@ -315,9 +355,9 @@ export function pageChrome(title, subtitle = "") {
         <hr data-admin-nav class="border-secondary">
         <a data-nav data-admin-nav class="nav-link" href="${root}admin/index.html">管理首頁</a>
         <a data-nav data-admin-nav class="nav-link" href="${root}admin/employees.html">員工管理</a>
-        <a data-nav data-admin-nav class="nav-link" href="${root}admin/attendance.html">出勤報表</a>
-        <a data-nav data-admin-nav class="nav-link" href="${root}admin/leave.html">請假審核</a>
-        <a data-nav data-admin-nav class="nav-link" href="${root}admin/overtime.html">加班審核</a>
+        <a data-nav data-admin-nav class="nav-link nav-link-with-count" href="${root}admin/attendance.html"><span>出勤報表</span><span class="nav-pending-badge" data-admin-pending-badge="attendance" aria-label="0 筆待處理" hidden>0</span></a>
+        <a data-nav data-admin-nav class="nav-link nav-link-with-count" href="${root}admin/leave.html"><span>請假審核</span><span class="nav-pending-badge" data-admin-pending-badge="leave" aria-label="0 筆待處理" hidden>0</span></a>
+        <a data-nav data-admin-nav class="nav-link nav-link-with-count" href="${root}admin/overtime.html"><span>加班審核</span><span class="nav-pending-badge" data-admin-pending-badge="overtime" aria-label="0 筆待處理" hidden>0</span></a>
         <a data-nav data-admin-nav class="nav-link" href="${root}admin/settings.html">系統設定</a>
       </nav>
     </aside>

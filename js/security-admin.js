@@ -8,6 +8,7 @@ import {
   callSecureFunction,
   db,
   fmtDateTime,
+  refreshAdminPendingBadges,
   showToast
 } from "./app.js";
 
@@ -115,7 +116,7 @@ async function renderAttendanceSecurity(profile, content) {
   content.insertBefore(host, content.firstChild);
 
   bindCaseFilters(host);
-  bindCaseReviews(host);
+  bindCaseReviews(host, profile);
 }
 
 function caseHtml(row, profile) {
@@ -237,7 +238,7 @@ function timeMentionedInReason(reason) {
   return match ? `${String(match[1]).padStart(2, "0")}:${match[2]}` : "";
 }
 
-function bindCaseReviews(host) {
+function bindCaseReviews(host, profile) {
   host.querySelectorAll("[data-review-decision]").forEach((button) => {
     button.addEventListener("click", async () => {
       const card = button.closest("[data-review-case]");
@@ -257,6 +258,7 @@ function bindCaseReviews(host) {
         }
         card.querySelector(".badge").textContent = statusLabels[button.dataset.reviewDecision] || button.dataset.reviewDecision;
         card.querySelector(".row")?.remove();
+        await refreshAdminPendingBadges(profile);
       } catch (error) {
         showToast(error.message, "danger");
         buttons.forEach((item) => { item.disabled = false; });

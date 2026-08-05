@@ -2076,7 +2076,16 @@ async function renderRequests(collectionName) {
         </div>
       </div>
       <div class="request-sortbar mb-3" aria-label="案件排序方式">
-        <span class="small fw-bold">排序</span>
+        <div class="request-sort-copy">
+          <span class="small fw-bold">排序方式</span>
+          <span class="small muted">調整案件顯示順序</span>
+        </div>
+        <label class="visually-hidden" for="requestSortSelect">選擇案件排序方式</label>
+        <select class="form-select form-select-sm request-sort-select" id="requestSortSelect">
+          <option value="priority">待審案件優先</option>
+          <option value="startAsc">假期近到遠</option>
+          <option value="startDesc">假期遠到近</option>
+        </select>
         <div class="btn-group btn-group-sm request-sort-buttons" role="group" aria-label="選擇案件排序方式">
           <button class="btn btn-primary" type="button" data-request-sort="priority" aria-pressed="true">待審優先</button>
           <button class="btn btn-outline-primary" type="button" data-request-sort="startAsc" aria-pressed="false">假期近到遠</button>
@@ -2206,6 +2215,7 @@ function bindRequestFilters() {
   const tableBody = content.querySelector(".request-table tbody");
   const rows = Array.from(content.querySelectorAll("[data-request-row]"));
   const sortButtons = Array.from(content.querySelectorAll("[data-request-sort]"));
+  const sortSelect = qs("#requestSortSelect");
   let sortMode = "priority";
 
   const sortRows = () => {
@@ -2248,18 +2258,21 @@ function bindRequestFilters() {
       applyFilters();
     });
   });
-  content.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-request-sort]");
-    if (!button) return;
-    sortMode = button.dataset.requestSort;
+  const setSortMode = (nextSortMode) => {
+    sortMode = nextSortMode;
+    sortSelect.value = sortMode;
     sortButtons.forEach((item) => {
-      const isActive = item === button;
+      const isActive = item.dataset.requestSort === sortMode;
       item.classList.toggle("btn-primary", isActive);
       item.classList.toggle("btn-outline-primary", !isActive);
       item.setAttribute("aria-pressed", String(isActive));
     });
     sortRows();
+  };
+  sortButtons.forEach((button) => {
+    button.addEventListener("click", () => setSortMode(button.dataset.requestSort));
   });
+  sortSelect.addEventListener("change", () => setSortMode(sortSelect.value));
   sortRows();
   applyFilters();
 }

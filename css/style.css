@@ -68,6 +68,17 @@
   background: #f8fafc;
 }
 
+.request-sort-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.request-sort-select {
+  display: none;
+}
+
 .request-table-wrap {
   max-height: calc(100vh - 315px);
   min-height: 260px;
@@ -243,18 +254,31 @@
   }
 
   .request-sortbar {
-    align-items: stretch;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px;
+    background: #f8fafc;
   }
 
   .request-sort-buttons {
-    display: grid;
-    grid-template-columns: 1fr;
-    width: 100%;
+    display: none;
   }
 
-  .request-sort-buttons .btn {
-    border-radius: 6px !important;
+  .request-sort-copy {
+    justify-content: space-between;
+    margin-right: 0;
+  }
+
+  .request-sort-copy .muted {
+    font-size: .78rem !important;
+  }
+
+  .request-sort-select {
+    display: block;
+    min-height: 38px;
+    border-color: #9cb6d2;
+    background-color: #fff;
   }
 
   .request-review-panel {

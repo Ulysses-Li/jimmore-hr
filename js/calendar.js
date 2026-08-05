@@ -21,6 +21,24 @@ qs("#pageContent").innerHTML = `
     </div>
     <div class="calendar-grid" id="calendar"></div>
     <div class="calendar-list" id="calendarList"></div>
+    <dialog class="calendar-detail-dialog" id="calendarDetailDialog" aria-labelledby="calendarDetailTitle">
+      <div class="calendar-detail-header">
+        <div>
+          <div class="small muted">休假詳情</div>
+          <h3 class="h5 mb-0" id="calendarDetailTitle"></h3>
+        </div>
+        <button class="calendar-detail-close" type="button" data-calendar-detail-close aria-label="關閉">×</button>
+      </div>
+      <dl class="calendar-detail-grid mb-0">
+        <div><dt>部門</dt><dd id="calendarDetailDepartment"></dd></div>
+        <div><dt>假別</dt><dd id="calendarDetailType"></dd></div>
+        <div class="calendar-detail-wide"><dt>請假時間</dt><dd id="calendarDetailTime"></dd></div>
+        <div class="calendar-detail-wide"><dt>核准時數</dt><dd id="calendarDetailHours"></dd></div>
+      </dl>
+      <div class="calendar-detail-actions">
+        <button class="btn btn-primary" type="button" data-calendar-detail-close>關閉</button>
+      </div>
+    </dialog>
   </div>`;
 
 let teamCalendar = { leaves: [] };
@@ -55,6 +73,21 @@ qs("#todayMonthBtn").addEventListener("click", () => {
   renderCalendarMonth();
 });
 
+qs("#pageContent").addEventListener("click", (event) => {
+  const eventButton = event.target.closest("[data-calendar-event-index]");
+  if (eventButton) {
+    openCalendarDetail(allLeaves[Number(eventButton.dataset.calendarEventIndex)]);
+    return;
+  }
+  if (event.target.closest("[data-calendar-detail-close]")) {
+    qs("#calendarDetailDialog").close();
+  }
+});
+
+qs("#calendarDetailDialog").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
+});
+
 renderCalendarMonth();
 
 function renderCalendarMonth() {
@@ -86,7 +119,7 @@ function renderLeaveCalendar(year, month, monthStart, monthEnd, events) {
     const dayEvents = events.filter((item) => isEventOnDate(item, date));
     cells.push(`<div class="calendar-cell">
       <div class="fw-semibold">${day}</div>
-      ${dayEvents.map((item) => `<div class="calendar-event">${item.userName} ${leaveTypeLabel(item.leaveType)}</div>`).join("")}
+      ${dayEvents.map((item) => calendarEventHtml(item)).join("")}
     </div>`);
 
     if (dayEvents.length) {
@@ -96,10 +129,13 @@ function renderLeaveCalendar(year, month, monthStart, monthEnd, events) {
           <span class="calendar-list-week">${days[date.getDay()]}</span>
         </div>
         <div class="calendar-list-events">
-          ${dayEvents.map((item) => `<div class="calendar-list-event">
-            <strong>${item.userName}</strong>
-            <span>${leaveTypeLabel(item.leaveType)}</span>
-          </div>`).join("")}
+          ${dayEvents.map((item) => `<button class="calendar-list-event" type="button" data-calendar-event-index="${allLeaves.indexOf(item)}">
+            <div class="calendar-list-event-person">
+              <strong>${escapeHtml(item.userName)}</strong>
+              <span>${escapeHtml(leaveTypeLabel(item.leaveType))}</span>
+            </div>
+            <span class="calendar-event-arrow" aria-hidden="true">›</span>
+          </button>`).join("")}
         </div>
       </div>`);
     }
@@ -109,6 +145,91 @@ function renderLeaveCalendar(year, month, monthStart, monthEnd, events) {
   qs("#calendarList").innerHTML = listItems.length
     ? listItems.join("")
     : `<div class="muted py-3">本月沒有已核准請假紀錄。</div>`;
+}
+
+function calendarEventHtml(item) {
+  const name = escapeHtml(item.userName);
+  const leaveType = escapeHtml(leaveTypeLabel(item.leaveType));
+  const details = escapeHtml(calendarEventDetails(item));
+  return `<button class="calendar-event" type="button" data-calendar-event-index="${allLeaves.indexOf(item)}" title="${details}" aria-label="查看 ${name} ${leaveType}的休假詳情">
+    <span class="calendar-event-person"><strong>${name}</strong> ${leaveType}</span>
+    <span class="calendar-event-arrow" aria-hidden="true">›</span>
+  </button>`;
+}
+
+function openCalendarDetail(item) {
+  if (!item) return;
+  const start = toDate(item.startTime);
+  const end = toDate(item.endTime);
+  qs("#calendarDetailTitle").textContent = item.userName || "員工";
+  qs("#calendarDetailDepartment").textContent = item.department || "-";
+  qs("#calendarDetailType").textContent = leaveTypeLabel(item.leaveType);
+  qs("#calendarDetailTime").textContent = `${formatDateTime(start)} 至 ${formatDateTime(end)}`;
+  qs("#calendarDetailHours").textContent = formatLeaveHours(resolveLeaveHours(item)) || "未提供";
+  qs("#calendarDetailDialog").showModal();
+}
+
+function calendarEventDetails(item) {
+  const start = toDate(item.startTime);
+  const end = toDate(item.endTime);
+  const hours = formatLeaveHours(resolveLeaveHours(item));
+  return `${item.userName}｜${leaveTypeLabel(item.leaveType)}｜${formatDateTime(start)} 至 ${formatDateTime(end)}${hours ? `｜${hours}` : ""}`;
+}
+
+function resolveLeaveHours(item) {
+  const approvedHours = Number(item.hours);
+  if (Number.isFinite(approvedHours) && approvedHours > 0) return approvedHours;
+
+  const start = toDate(item.startTime);
+  const end = toDate(item.endTime);
+  if (!sameDate(start, end)) return 0;
+
+  const settings = teamCalendar?.attendanceSettings || {};
+  const lunchStart = timeOnDate(start, settings.lunchStart || "12:00");
+  const lunchEnd = timeOnDate(start, settings.lunchEnd || "13:00");
+  const totalMinutes = Math.max(0, (end.getTime() - start.getTime()) / 60000);
+  const lunchOverlapMinutes = Math.max(
+    0,
+    (Math.min(end.getTime(), lunchEnd.getTime()) - Math.max(start.getTime(), lunchStart.getTime())) / 60000
+  );
+  return Math.max(0, totalMinutes - lunchOverlapMinutes) / 60;
+}
+
+function sameDate(a, b) {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function timeOnDate(date, value) {
+  const [hours, minutes] = String(value).split(":").map(Number);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), hours || 0, minutes || 0);
+}
+
+function formatDateTime(date) {
+  return new Intl.DateTimeFormat("zh-TW", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
+function formatLeaveHours(value) {
+  const hours = Number(value);
+  if (!Number.isFinite(hours) || hours <= 0) return "";
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} 小時`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "'": "&#39;",
+    '"': "&quot;"
+  })[char]);
 }
 
 function isEventOnDate(item, date) {

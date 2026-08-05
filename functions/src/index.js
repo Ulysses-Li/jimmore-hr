@@ -88,7 +88,8 @@ exports.getTeamCalendar = callable(async function getTeamCalendar(request) {
       department: cleanText(leave.department, 100),
       leaveType: cleanText(leave.leaveType, 50),
       startTime: toIso(leave.startTime),
-      endTime: toIso(leave.endTime)
+      endTime: toIso(leave.endTime),
+      hours: Math.max(0, Number(leave.hours) || 0)
     }))
     .filter((leave) => leave.startTime && leave.endTime);
   const lateRecords = earliestCheckInsByUserDate(attendanceSnap.docs

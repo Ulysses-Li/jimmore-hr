@@ -242,10 +242,16 @@ function updateAdminPendingBadge(type, count) {
   const badgeElement = qs(`[data-admin-pending-badge="${type}"]`);
   if (!badgeElement) return;
   const normalizedCount = Math.max(0, Number(count || 0));
+  const navLink = badgeElement.closest("a");
+  const navLabel = navLink?.querySelector("span")?.textContent?.trim() || "待處理案件";
   badgeElement.textContent = normalizedCount > 99 ? "99+" : String(normalizedCount);
   badgeElement.hidden = normalizedCount === 0;
   badgeElement.setAttribute("aria-label", `${normalizedCount} 筆待處理`);
-  badgeElement.closest("a")?.setAttribute("title", normalizedCount
+  navLink?.classList.toggle("has-pending", normalizedCount > 0);
+  navLink?.setAttribute("aria-label", normalizedCount
+    ? `${navLabel}，${normalizedCount} 筆待處理`
+    : navLabel);
+  navLink?.setAttribute("title", normalizedCount
     ? `${normalizedCount} 筆待處理`
     : "目前沒有待處理案件");
 }

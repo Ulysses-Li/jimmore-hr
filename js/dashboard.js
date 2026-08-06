@@ -98,10 +98,11 @@ qs("#attendanceRows").innerHTML = attendanceSnap.empty
   .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp))
   .slice(0, 6)
   .map((row) => {
+    const effectiveStatus = personalAttendanceRecordStatus(row, leaveRows, workSettings);
     return `<tr>
       <td>${fmtDateTime(row.timestamp)}</td>
       <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
-      <td>${badge(row.status)}</td>
+      <td>${badge(effectiveStatus)}</td>
       <td>${row.latitude?.toFixed?.(5) || "-"}, ${row.longitude?.toFixed?.(5) || "-"}</td>
     </tr>`;
   }).join("");
@@ -191,6 +192,53 @@ function calculatePersonalLateEvidence(record, approvedLeaves, settings) {
     coveredLeaveMinutes,
     lateMinutes: Math.max(0, rawLateMinutes - graceMinutes - coveredLeaveMinutes)
   };
+}
+
+function personalAttendanceRecordStatus(record, allLeaves, settings) {
+  const actual = toDate(record.timestamp);
+  if (Number.isNaN(actual.getTime())) return record.status || "normal";
+  const date = record.date || todayKey(actual);
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const approvedLeaves = allLeaves.filter((item) => item.status === "approved" && personalLeaveOnDate(item, date));
+
+  if (record.type === "checkIn") {
+    const expected = timeToDate(date, record.workStart || settings.workStart || "09:00");
+    const scheduledMinutes = personalWorkMinutesInRange(expected, actual, expected, actual, lunchStart, lunchEnd);
+    const coveredLeaveMinutes = approvedLeaves.reduce((sum, item) => sum + personalWorkMinutesInRange(
+      expected,
+      actual,
+      toDate(item.startTime),
+      toDate(item.endTime),
+      lunchStart,
+      lunchEnd
+    ), 0);
+    const lateMinutes = scheduledMinutes - coveredLeaveMinutes
+      - Number(record.lateGraceMinutes ?? settings.lateGraceMinutes ?? 0);
+    return lateMinutes > 0 ? "late" : "normal";
+  }
+
+  if (record.type === "checkOut") {
+    const expected = timeToDate(date, record.effectiveWorkEnd || record.workEnd || settings.workEnd || "18:00");
+    const scheduledMinutes = personalWorkMinutesInRange(actual, expected, actual, expected, lunchStart, lunchEnd);
+    const coveredLeaveMinutes = approvedLeaves.reduce((sum, item) => sum + personalWorkMinutesInRange(
+      actual,
+      expected,
+      toDate(item.startTime),
+      toDate(item.endTime),
+      lunchStart,
+      lunchEnd
+    ), 0);
+    return scheduledMinutes - coveredLeaveMinutes > 0 ? "earlyLeave" : "normal";
+  }
+
+  return record.status || "normal";
+}
+
+function personalLeaveOnDate(item, date) {
+  const dayStart = new Date(`${date}T00:00:00`);
+  const dayEnd = new Date(`${date}T23:59:59`);
+  return toDate(item.startTime) <= dayEnd && toDate(item.endTime) >= dayStart;
 }
 
 function personalLateTable(records, year, month) {

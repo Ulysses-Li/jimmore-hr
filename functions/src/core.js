@@ -186,6 +186,16 @@ function calculateWorkHours(records, dateKey, settings = {}) {
   return Number((minutes / 60).toFixed(2));
 }
 
+function workingMinutesBetween(startValue, endValue, lunchStartValue, lunchEndValue) {
+  const start = startValue?.toDate ? startValue.toDate() : new Date(startValue);
+  const end = endValue?.toDate ? endValue.toDate() : new Date(endValue);
+  const lunchStart = lunchStartValue?.toDate ? lunchStartValue.toDate() : new Date(lunchStartValue);
+  const lunchEnd = lunchEndValue?.toDate ? lunchEndValue.toDate() : new Date(lunchEndValue);
+  if ([start, end, lunchStart, lunchEnd].some((date) => Number.isNaN(date.getTime())) || end <= start) return 0;
+  const grossMinutes = Math.ceil((end.getTime() - start.getTime()) / 60000);
+  return Math.max(0, grossMinutes - overlapMinutes(start, end, lunchStart, lunchEnd));
+}
+
 function calculateHoursExcludingLunch(startValue, endValue, settings = {}) {
   const start = startValue?.toDate ? startValue.toDate() : new Date(startValue);
   const end = endValue?.toDate ? endValue.toDate() : new Date(endValue);
@@ -243,5 +253,6 @@ module.exports = {
   taipeiParts,
   timeToMinutes,
   todayKeyTaipei,
-  validateCoordinates
+  validateCoordinates,
+  workingMinutesBetween
 };

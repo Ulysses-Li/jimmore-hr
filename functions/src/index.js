@@ -19,7 +19,8 @@ const {
   earliestCheckInsByUserDate,
   isRestDay,
   taipeiDateTime,
-  todayKeyTaipei
+  todayKeyTaipei,
+  workingMinutesBetween
 } = require("./core");
 
 initializeApp();
@@ -214,15 +215,17 @@ function scheduledHours(date, shift, settings) {
 }
 
 function resolveStatusWithLeaves(type, at, date, shift, settings, leaveRows) {
+  const lunchStart = taipeiDateTime(date, settings.lunchStart || "12:00");
+  const lunchEnd = taipeiDateTime(date, settings.lunchEnd || "13:00");
   if (type === "checkIn") {
     const start = taipeiDateTime(date, shift.workStart);
-    const lateMinutes = Math.ceil((at - start) / 60000)
+    const lateMinutes = workingMinutesBetween(start, at, lunchStart, lunchEnd)
       - Number(settings.lateGraceMinutes || 0)
       - leaveCoverageMinutes(start, at, leaveRows, date, settings);
     return lateMinutes > 0 ? "late" : "normal";
   }
   const end = taipeiDateTime(date, effectiveWorkEnd(date, shift, settings));
-  const earlyMinutes = Math.ceil((end - at) / 60000)
+  const earlyMinutes = workingMinutesBetween(at, end, lunchStart, lunchEnd)
     - leaveCoverageMinutes(at, end, leaveRows, date, settings);
   return earlyMinutes > 0 ? "earlyLeave" : "normal";
 }

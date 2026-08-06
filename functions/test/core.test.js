@@ -12,7 +12,8 @@ const {
   isRestDay,
   resolvePunchStatus,
   taipeiDateTime,
-  todayKeyTaipei
+  todayKeyTaipei,
+  workingMinutesBetween
 } = require("../src/core");
 
 test("only field staff can punch outside the normal window", () => {
@@ -90,6 +91,38 @@ test("work hours pair punches and deduct lunch overlap", () => {
     { type: "checkOut", timestamp: new Date("2026-07-23T10:00:00Z") }
   ];
   assert.equal(calculateWorkHours(records, "2026-07-23", { lunchStart: "12:00", lunchEnd: "13:00" }), 8);
+});
+
+test("late and early-leave intervals exclude the lunch break", () => {
+  const lunchStart = new Date("2026-08-06T04:00:00Z");
+  const lunchEnd = new Date("2026-08-06T05:00:00Z");
+  assert.equal(
+    workingMinutesBetween(
+      new Date("2026-08-06T01:00:00Z"),
+      new Date("2026-08-06T04:52:00Z"),
+      lunchStart,
+      lunchEnd
+    ),
+    180
+  );
+  assert.equal(
+    workingMinutesBetween(
+      new Date("2026-08-06T01:00:00Z"),
+      new Date("2026-08-06T05:10:00Z"),
+      lunchStart,
+      lunchEnd
+    ),
+    190
+  );
+  assert.equal(
+    workingMinutesBetween(
+      new Date("2026-08-06T03:00:00Z"),
+      new Date("2026-08-06T10:00:00Z"),
+      lunchStart,
+      lunchEnd
+    ),
+    360
+  );
 });
 
 test("overtime hours deduct configured lunch overlap", () => {

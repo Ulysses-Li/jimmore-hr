@@ -112,15 +112,19 @@ qs("#pageContent").innerHTML = `
 function resolveStatus(type, at, approvedLeaves = [], shiftOverride = null) {
   const dateKey = todayKey(at);
   const shift = shiftOverride || getAssignedShift();
+  const lunchStart = timeToDate(dateKey, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(dateKey, settings.lunchEnd || "13:00");
   if (type === "checkIn") {
     const start = timeToDate(dateKey, shift.workStart);
-    const coveredMinutes = leaveOverlapMinutes(start, at, approvedLeaves);
-    const lateMinutes = Math.ceil((at.getTime() - start.getTime()) / 60000) - coveredMinutes - Number(settings.lateGraceMinutes || 0);
+    const scheduledMinutes = workMinutesInRange(start, at, start, at, lunchStart, lunchEnd);
+    const coveredMinutes = calculateApprovedLeaveWorkMinutesInRange(start, at, approvedLeaves, lunchStart, lunchEnd);
+    const lateMinutes = scheduledMinutes - coveredMinutes - Number(settings.lateGraceMinutes || 0);
     return lateMinutes > 0 ? "late" : "normal";
   }
   const end = timeToDate(dateKey, effectiveWorkEndTime(dateKey, shift));
-  const coveredMinutes = leaveOverlapMinutes(at, end, approvedLeaves);
-  const earlyMinutes = Math.ceil((end.getTime() - at.getTime()) / 60000) - coveredMinutes;
+  const scheduledMinutes = workMinutesInRange(at, end, at, end, lunchStart, lunchEnd);
+  const coveredMinutes = calculateApprovedLeaveWorkMinutesInRange(at, end, approvedLeaves, lunchStart, lunchEnd);
+  const earlyMinutes = scheduledMinutes - coveredMinutes;
   return earlyMinutes > 0 ? "earlyLeave" : "normal";
 }
 
@@ -310,11 +314,6 @@ function todayClosureText() {
 function timeToMinutes(value) {
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
-}
-
-function leaveOverlapMinutes(start, end, approvedLeaves) {
-  if (end <= start) return 0;
-  return approvedLeaves.reduce((sum, item) => sum + overlapMinutes(start, end, toDate(item.startTime), toDate(item.endTime)), 0);
 }
 
 function overlapHours(start, end, blockStart, blockEnd) {

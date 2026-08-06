@@ -294,10 +294,10 @@ function calculateAdminLateEvidence(record, leaveEvents, settings) {
   const actual = timestampToDate(record.timestamp);
   const date = record.date || todayKey(actual);
   const expected = timeToDate(date, record.workStart || "09:00");
-  const rawLateMinutes = Math.max(0, Math.ceil((actual.getTime() - expected.getTime()) / 60000));
-  const graceMinutes = Math.max(0, Number(record.lateGraceMinutes ?? settings.lateGraceMinutes ?? 0));
   const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const rawLateMinutes = workMinutesInRange(expected, actual, expected, actual, lunchStart, lunchEnd);
+  const graceMinutes = Math.max(0, Number(record.lateGraceMinutes ?? settings.lateGraceMinutes ?? 0));
   const coveredLeaveMinutes = leaveEvents
     .filter((item) => item.userId === record.userId)
     .reduce((sum, item) => sum + workMinutesInRange(
@@ -966,6 +966,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
   }).join("") : `<tr><td colspan="5" class="muted">此員工本月尚無請假紀錄</td></tr>`;
 
   detailBody.innerHTML = attendanceRows.length ? attendanceRows.map((row) => {
+    const effectiveStatus = attendanceRecordStatusForReport(row, user, settings, userApprovedLeaves);
     return `<tr>
       <td>${fmtDateTime(row.timestamp)}</td>
       <td>${row.userName || user.name || "-"}</td>
@@ -973,7 +974,7 @@ function renderSelectedAttendance(userId, usersById, allAttendanceRows, allLeave
       <td>${row.department || user.department || "-"}</td>
       <td>${row.shiftName || "-"}</td>
       <td>${row.type === "checkIn" ? "簽到" : "簽退"}</td>
-      <td>${badge(row.status)}</td>
+      <td>${badge(effectiveStatus)}</td>
       <td>${mapLink(row.latitude, row.longitude)}</td>
       ${adminProfile.role === "admin" ? `<td><button class="btn btn-sm btn-outline-danger" type="button" data-delete-attendance="${escapeHtml(row.id)}">刪除</button></td>` : ""}
     </tr>`;
@@ -1860,18 +1861,54 @@ function attendanceWorkRanges(orderedRows) {
   return ranges;
 }
 
+function attendanceRecordStatusForReport(row, user, settings, approvedLeaves) {
+  const at = timestampToDate(row.timestamp);
+  const date = row.date || dateKeyFromTimestamp(row.timestamp);
+  if (!date || Number.isNaN(at.getTime())) return row.status || "normal";
+  const shift = resolveReportShift(row, user, settings);
+  const dayLeaves = approvedLeaves.filter((item) => isLeaveOnDate(item, date));
+  if (row.type === "checkIn") {
+    return calculateAdjustedLateMinutes(date, at, shift, settings, dayLeaves) > 0 ? "late" : "normal";
+  }
+  if (row.type === "checkOut") {
+    return calculateAdjustedEarlyLeaveMinutes(date, at, shift, settings, dayLeaves) > 0 ? "earlyLeave" : "normal";
+  }
+  return row.status || "normal";
+}
+
 function calculateAdjustedLateMinutes(date, checkInDate, shift, settings, approvedLeaves) {
   const expected = timeToDate(date, shift.workStart || settings.workStart || "09:00");
-  const rawLateMinutes = minutesAfter(checkInDate, expected) - Number(settings.lateGraceMinutes || 0);
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const rawLateMinutes = workMinutesInRange(expected, checkInDate, expected, checkInDate, lunchStart, lunchEnd)
+    - Number(settings.lateGraceMinutes || 0);
   if (rawLateMinutes <= 0) return 0;
-  return Math.max(0, rawLateMinutes - leaveOverlapMinutes(expected, checkInDate, approvedLeaves));
+  const leaveMinutes = approvedLeaves.reduce((sum, item) => sum + workMinutesInRange(
+    expected,
+    checkInDate,
+    timestampToDate(item.startTime),
+    timestampToDate(item.endTime),
+    lunchStart,
+    lunchEnd
+  ), 0);
+  return Math.max(0, rawLateMinutes - leaveMinutes);
 }
 
 function calculateAdjustedEarlyLeaveMinutes(date, checkOutDate, shift, settings, approvedLeaves) {
   const expected = timeToDate(date, effectiveWorkEndTime(date, shift, settings));
-  const rawEarlyLeaveMinutes = minutesAfter(expected, checkOutDate);
+  const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
+  const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const rawEarlyLeaveMinutes = workMinutesInRange(checkOutDate, expected, checkOutDate, expected, lunchStart, lunchEnd);
   if (rawEarlyLeaveMinutes <= 0) return 0;
-  return Math.max(0, rawEarlyLeaveMinutes - leaveOverlapMinutes(checkOutDate, expected, approvedLeaves));
+  const leaveMinutes = approvedLeaves.reduce((sum, item) => sum + workMinutesInRange(
+    checkOutDate,
+    expected,
+    timestampToDate(item.startTime),
+    timestampToDate(item.endTime),
+    lunchStart,
+    lunchEnd
+  ), 0);
+  return Math.max(0, rawEarlyLeaveMinutes - leaveMinutes);
 }
 
 function calculateReportApprovedLeaveWorkHours(date, approvedLeaves, shift, settings) {
@@ -1904,13 +1941,6 @@ function scheduledWorkHours(date, shift, settings) {
 function specialClosureForDate(date, settings) {
   return (Array.isArray(settings.specialClosureDates) ? settings.specialClosureDates : [])
     .find((item) => item?.date === date && /^\d{2}:\d{2}$/.test(item.closeTime || ""));
-}
-
-function leaveOverlapMinutes(start, end, approvedLeaves) {
-  if (!start || !end || end <= start) return 0;
-  return approvedLeaves.reduce((sum, item) => {
-    return sum + overlapMinutes(start, end, timestampToDate(item.startTime), timestampToDate(item.endTime));
-  }, 0);
 }
 
 function workMinutesInRange(start, end, blockStart, blockEnd, lunchStart, lunchEnd) {
@@ -2002,10 +2032,6 @@ async function createManualAttendanceRecord(dataset, usersById, settings) {
   });
   showToast(`${user.name || user.email} ${date} 已補登${typeLabel}`, "success");
   await renderAttendanceReport();
-}
-
-function minutesAfter(later, earlier) {
-  return Math.max(0, Math.ceil((later.getTime() - earlier.getTime()) / 60000));
 }
 
 function timestampToDate(value) {

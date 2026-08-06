@@ -171,10 +171,10 @@ function calculatePersonalLateEvidence(record, approvedLeaves, settings) {
   const actual = toDate(record.timestamp);
   const date = record.date || todayKey(actual);
   const expected = timeToDate(date, record.workStart || settings.workStart || "09:00");
-  const rawLateMinutes = Math.max(0, Math.ceil((actual.getTime() - expected.getTime()) / 60000));
-  const graceMinutes = Math.max(0, Number(record.lateGraceMinutes ?? settings.lateGraceMinutes ?? 0));
   const lunchStart = timeToDate(date, settings.lunchStart || "12:00");
   const lunchEnd = timeToDate(date, settings.lunchEnd || "13:00");
+  const rawLateMinutes = personalWorkMinutesInRange(expected, actual, expected, actual, lunchStart, lunchEnd);
+  const graceMinutes = Math.max(0, Number(record.lateGraceMinutes ?? settings.lateGraceMinutes ?? 0));
   const coveredLeaveMinutes = approvedLeaves.reduce((sum, item) => sum + personalWorkMinutesInRange(
     expected,
     actual,
